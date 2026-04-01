@@ -261,3 +261,156 @@ class SimSceneBuilder:
     @property
     def is_initialized(self) -> bool:
         return self._initialized
+
+    @property
+    def piece_ids(self) -> dict[str, int]:
+        """Map of square algebraic name -> PyBullet body ID."""
+        return dict(self._piece_ids)
+
+    def load_robot(
+        self,
+        urdf_path: str = "",
+        base_position: tuple[float, float, float] = (0.0, -0.3, 0.0),
+        base_orientation: tuple[float, float, float, float] = (0, 0, 0, 1),
+    ) -> Optional[int]:
+        """
+        Load a robot URDF into the scene.
+
+        Args:
+            urdf_path: Path to the URDF file. Empty = use bundled Kuka IIWA.
+            base_position: Robot base position [x, y, z].
+            base_orientation: Robot base orientation as quaternion [x, y, z, w].
+
+        Returns:
+            PyBullet body ID of the robot, or None on failure.
+        """
+        if self.config.backend == "pybullet":
+            import pybullet as p
+            import pybullet_data
+
+            if not urdf_path:
+                p.setAdditionalSearchPath(pybullet_data.getDataPath())
+                urdf_path = "kuka_iiwa/model.urdf"
+
+            try:
+                robot_id = p.loadURDF(
+                    urdf_path,
+                    basePosition=base_position,
+                    baseOrientation=base_orientation,
+                    useFixedBase=True,
+                    physicsClientId=self._sim_client,
+                )
+                logger.info(f"Robot loaded: {urdf_path} at {base_position}")
+                return robot_id
+            except Exception as e:
+                logger.error(f"Failed to load robot URDF: {e}")
+                return None
+        return None
+
+    def build_colored_squares(self) -> None:
+        """
+        Add individual colored square tiles to the board for visual rendering.
+
+        Creates alternating light/dark visual-only shapes on the board surface.
+        """
+        if self.config.backend != "pybullet":
+            return
+
+        import pybullet as p
+
+        sq_size = self._board.config.square_size_m
+        half = sq_size / 2
+        thickness = 0.001  # 1mm thin tiles
+
+        for rank in range(8):
+            for file in range(8):
+                sq = Square(file=file, rank=rank)
+                center = self._board.get_square_center(sq)
+
+                is_light = (file + rank) % 2 == 1
+                if is_light:
+                    rgba = [0.95, 0.90, 0.80, 1.0]  # cream
+                else:
+                    rgba = [0.45, 0.30, 0.18, 1.0]  # dark wood
+
+                vis = p.createVisualShape(
+                    p.GEOM_BOX,
+                    halfExtents=[half, half, thickness / 2],
+                    rgbaColor=rgba,
+                )
+                p.createMultiBody(
+                    baseMass=0,
+                    baseVisualShapeIndex=vis,
+                    basePosition=[center[0], center[1], 0.001],
+                )
+
+        logger.debug("Colored square tiles added to board")
+
+    def get_piece_pose(self, square: Square) -> Optional[np.ndarray]:
+        """
+        Get the current 3D pose of a piece at the given square.
+
+        Returns:
+            4x4 SE(3) transform or None if no piece at that square.
+        """
+        sq_name = square.algebraic
+        if sq_name not in self._piece_ids:
+            return None
+
+        if self.config.backend == "pybullet":
+            import pybullet as p
+
+            pos, orn = p.getBasePositionAndOrientation(
+                self._piece_ids[sq_name],
+                physicsClientId=self._sim_client,
+            )
+            rot = np.array(p.getMatrixFromQuaternion(orn)).reshape(3, 3)
+            T = np.eye(4, dtype=np.float64)
+            T[:3, :3] = rot
+            T[:3, 3] = pos
+            return T
+
+        return None
+
+    def move_piece(self, from_sq: Square, to_sq: Square) -> bool:
+        """
+        Directly teleport a piece from one square to another (no physics).
+
+        Useful for scripted demos and testing without robot manipulation.
+
+        Args:
+            from_sq: Source square.
+            to_sq: Target square.
+
+        Returns:
+            True if piece was moved.
+        """
+        sq_name = from_sq.algebraic
+        if sq_name not in self._piece_ids:
+            logger.warning(f"No piece at {sq_name} to move")
+            return False
+
+        body_id = self._piece_ids.pop(sq_name)
+        target_pos = self._board.get_square_center(to_sq)
+
+        if self.config.backend == "pybullet":
+            import pybullet as p
+
+            # Get current height (keep piece upright)
+            pos, orn = p.getBasePositionAndOrientation(
+                body_id, physicsClientId=self._sim_client
+            )
+            p.resetBasePositionAndOrientation(
+                body_id,
+                [target_pos[0], target_pos[1], pos[2]],
+                orn,
+                physicsClientId=self._sim_client,
+            )
+
+        self._piece_ids[to_sq.algebraic] = body_id
+        logger.debug(f"Piece moved: {from_sq.algebraic} -> {to_sq.algebraic}")
+        return True
+
+    def get_board_model(self) -> BoardModel:
+        """Get the underlying board model."""
+        return self._board

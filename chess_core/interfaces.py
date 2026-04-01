@@ -213,7 +213,7 @@ class ChessMove:
         )
 
     def __str__(self) -> str:
-        return f"{self.color.name} {self.piece.name} {self.source}→{self.target} ({self.move_type.name})"
+        return f"{self.color.name} {self.piece.name} {self.source}->{self.target} ({self.move_type.name})"
 
 
 # =============================================================================

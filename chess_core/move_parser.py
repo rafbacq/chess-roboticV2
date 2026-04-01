@@ -114,7 +114,7 @@ def parse_uci_move(uci_string: str, board: chess.Board) -> ChessMove:
         uci_string=uci_string,
     )
 
-    logger.debug(f"Parsed UCI '{uci_string}' → {result}")
+    logger.debug(f"Parsed UCI '{uci_string}' -> {result}")
     return result
 
 
@@ -175,11 +175,11 @@ def get_castling_rook_move(move: ChessMove) -> tuple[Square, Square]:
     rank = move.source.rank  # same rank for king and rook
 
     if move.move_type == MoveType.CASTLING_KINGSIDE:
-        # King: e→g, Rook: h→f
+        # King: e->g, Rook: h->f
         rook_src = Square(file=7, rank=rank)
         rook_tgt = Square(file=5, rank=rank)
     else:
-        # King: e→c, Rook: a→d
+        # King: e->c, Rook: a->d
         rook_src = Square(file=0, rank=rank)
         rook_tgt = Square(file=3, rank=rank)
 

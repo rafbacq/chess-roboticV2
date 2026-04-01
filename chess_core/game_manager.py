@@ -94,7 +94,11 @@ class GameManager:
     def __init__(self, config: GameConfig | None = None) -> None:
         self.config = config or GameConfig()
         self._board = chess.Board(self.config.starting_fen)
-        self._engine = StockfishEngine(self.config.engine_config)
+        self._engine: Optional[StockfishEngine] = None
+        self._needs_engine = (
+            self.config.white_player == PlayerType.ENGINE
+            or self.config.black_player == PlayerType.ENGINE
+        )
         self._history: list[MoveRecord] = []
         self._phase = GamePhase.IDLE
         self._game_start_time: float = 0.0
@@ -136,8 +140,10 @@ class GameManager:
         self._history.clear()
         self._game_start_time = time.time()
 
-        self._engine.start()
-        self._engine.new_game()
+        if self._needs_engine:
+            self._engine = StockfishEngine(self.config.engine_config)
+            self._engine.start()
+            self._engine.new_game()
 
         self._phase = GamePhase.AWAITING_MOVE
         logger.info(
@@ -147,7 +153,9 @@ class GameManager:
 
     def stop_game(self) -> None:
         """Stop the current game and clean up."""
-        self._engine.stop()
+        if self._engine is not None:
+            self._engine.stop()
+            self._engine = None
         self._phase = GamePhase.IDLE
         logger.info(f"Game stopped after {len(self._history)} moves")
 
@@ -193,6 +201,11 @@ class GameManager:
                 f"Expected AWAITING_MOVE."
             )
 
+        if self._engine is None:
+            raise RuntimeError(
+                "Engine not available. Ensure at least one player is ENGINE type."
+            )
+
         self._phase = GamePhase.THINKING
         logger.info("Engine thinking...")
 
@@ -227,10 +240,10 @@ class GameManager:
         Raises:
             RuntimeError: If the game is not in MOVE_VALIDATED or VERIFYING phase.
         """
-        if self._phase not in (GamePhase.MOVE_VALIDATED, GamePhase.VERIFYING):
+        if self._phase not in (GamePhase.MOVE_VALIDATED, GamePhase.VERIFYING, GamePhase.EXECUTING):
             raise RuntimeError(
                 f"Cannot confirm move in phase {self._phase.name}. "
-                f"Expected MOVE_VALIDATED or VERIFYING."
+                f"Expected MOVE_VALIDATED, VERIFYING, or EXECUTING."
             )
 
         fen_before = self._board.fen()
@@ -266,7 +279,7 @@ class GameManager:
         """Manually transition the game phase (for execution pipeline use)."""
         old = self._phase
         self._phase = phase
-        logger.debug(f"Phase transition: {old.name} → {phase.name}")
+        logger.debug(f"Phase transition: {old.name} -> {phase.name}")
 
     def get_piece_at(self, square: Square) -> Optional[tuple]:
         """Get the piece at a square, returns (PieceType, PieceColor) or None."""
