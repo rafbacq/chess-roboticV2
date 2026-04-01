@@ -1,0 +1,35 @@
+# RGB Camera Configuration
+
+camera:
+  type: "rgb"
+  device_id: 0                # OpenCV device index
+  width: 1280
+  height: 720
+  fps: 30
+  auto_exposure: true
+  auto_white_balance: true
+
+  # Mounting
+  mount_type: "fixed"         # "fixed" or "on_arm"
+  mount_height_m: 0.60        # height above board surface
+  mount_centering: "board"    # camera centered over board
+
+  # Calibration
+  calibration_pattern: "checkerboard"   # "checkerboard" or "apriltag"
+  checkerboard_size: [7, 7]             # inner corners
+  checkerboard_square_mm: 30.0
+
+# AprilTag configuration (if used for extrinsic calibration)
+apriltags:
+  family: "tag36h11"
+  tag_size_mm: 50.0
+  tag_ids:
+    a1_corner: 0
+    h1_corner: 1
+    h8_corner: 2
+    a8_corner: 3
+  tag_positions_board_frame:  # center of each tag in board frame (mm)
+    0: [-40, -40, 0]         # outside a1 corner
+    1: [436, -40, 0]         # outside h1 corner
+    2: [436, 436, 0]         # outside h8 corner
+    3: [-40, 436, 0]         # outside a8 corner

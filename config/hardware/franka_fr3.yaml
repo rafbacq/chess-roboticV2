@@ -1,0 +1,55 @@
+# Franka Research 3 Configuration
+
+arm:
+  name: "franka_fr3"
+  type: "franka"
+  dof: 7
+  ip_address: "172.16.0.2"
+
+  max_joint_velocity_rads: 2.62
+  max_cartesian_velocity_ms: 0.3
+  max_payload_kg: 3.0
+  max_reach_m: 0.855
+  repeatability_mm: 0.1
+
+  default_velocity_scale: 0.2
+  default_acceleration_scale: 0.2
+  near_board_velocity_scale: 0.1
+
+  home_position_deg: [0, -45, 0, -135, 0, 90, 45]
+  safe_position_deg: [0, -30, 0, -120, 0, 90, 45]
+
+  collision_sensitivity: 4
+  has_force_torque: true
+  has_collision_detection: true
+
+gripper:
+  name: "franka_hand"
+  type: "franka_hand"
+  min_width_mm: 0
+  max_width_mm: 80
+  max_force_n: 70
+  default_speed: 0.3
+  default_force_n: 10
+  has_force_sensing: true
+
+  grip_presets:
+    pawn: {width_mm: 18, force_n: 5}
+    knight: {width_mm: 22, force_n: 8}
+    bishop: {width_mm: 20, force_n: 8}
+    rook: {width_mm: 24, force_n: 10}
+    queen: {width_mm: 22, force_n: 8}
+    king: {width_mm: 22, force_n: 8}
+
+tool_offset:
+  x_mm: 0
+  y_mm: 0
+  z_mm: 107
+  roll_deg: 0
+  pitch_deg: 0
+  yaw_deg: -45
+
+model:
+  urdf: "urdf/franka_fr3.urdf"
+  srdf: "srdf/franka_fr3.srdf"
+  moveit_config: "config/franka_fr3_moveit.yaml"

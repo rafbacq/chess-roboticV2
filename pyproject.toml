@@ -1,0 +1,92 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chess-robotic"
+version = "0.1.0"
+description = "Chess-playing robotic arm with CV, classical manipulation, and optional RL"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Chess Robotic Team"},
+]
+
+dependencies = [
+    "numpy>=1.24",
+    "opencv-python>=4.8",
+    "python-chess>=1.999",
+    "pydantic>=2.0",
+    "PyYAML>=6.0",
+    "scipy>=1.11",
+    "transforms3d>=0.4",
+]
+
+[project.optional-dependencies]
+sim = [
+    "pybullet>=3.2",
+]
+learning = [
+    "torch>=2.1",
+    "stable-baselines3>=2.0",
+    "gymnasium>=0.29",
+    "tensorboard>=2.14",
+    "wandb>=0.15",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1",
+    "mypy>=1.5",
+    "pre-commit>=3.0",
+]
+all = [
+    "chess-robotic[sim,learning,dev]",
+]
+
+[tool.setuptools.packages.find]
+include = [
+    "chess_core*",
+    "board_state*",
+    "perception*",
+    "calibration*",
+    "robot_model*",
+    "motion_planning*",
+    "manipulation*",
+    "execution*",
+    "simulation*",
+    "learning*",
+    "ui_tools*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "tests",
+    "chess_core/tests",
+    "board_state/tests",
+    "perception/tests",
+    "calibration/tests",
+    "robot_model/tests",
+    "motion_planning/tests",
+    "manipulation/tests",
+    "execution/tests",
+    "simulation/tests",
+    "learning/tests",
+    "ui_tools/tests",
+]
+python_files = "test_*.py"
+python_functions = "test_*"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

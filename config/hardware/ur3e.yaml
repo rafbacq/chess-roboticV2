@@ -1,0 +1,54 @@
+# Universal Robots UR3e Configuration
+
+arm:
+  name: "ur3e"
+  type: "ur"
+  dof: 6
+  ip_address: "192.168.1.100"
+
+  max_joint_velocity_rads: 3.14
+  max_cartesian_velocity_ms: 0.25
+  max_payload_kg: 3.0
+  max_reach_m: 0.50
+  repeatability_mm: 0.03
+
+  default_velocity_scale: 0.2
+  default_acceleration_scale: 0.2
+  near_board_velocity_scale: 0.1
+
+  home_position_deg: [0, -90, 90, -90, -90, 0]
+  safe_position_deg: [0, -80, 80, -90, -90, 0]
+
+  collision_sensitivity: 3
+  has_force_torque: true
+  has_collision_detection: true
+
+gripper:
+  name: "robotiq_2f85"
+  type: "robotiq_2f85"
+  min_width_mm: 0
+  max_width_mm: 85
+  max_force_n: 235
+  default_speed: 0.3
+  default_force_n: 15
+
+  grip_presets:
+    pawn: {width_mm: 18, force_n: 10}
+    knight: {width_mm: 22, force_n: 12}
+    bishop: {width_mm: 20, force_n: 12}
+    rook: {width_mm: 24, force_n: 15}
+    queen: {width_mm: 22, force_n: 12}
+    king: {width_mm: 22, force_n: 12}
+
+tool_offset:
+  x_mm: 0
+  y_mm: 0
+  z_mm: 160
+  roll_deg: 0
+  pitch_deg: 0
+  yaw_deg: 0
+
+model:
+  urdf: "urdf/ur3e.urdf"
+  srdf: "srdf/ur3e.srdf"
+  moveit_config: "config/ur3e_moveit.yaml"

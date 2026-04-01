@@ -1,0 +1,56 @@
+# Standard tournament chess board configuration
+
+board:
+  square_size_mm: 57.0          # FIDE tournament standard
+  board_width_squares: 8
+  board_height_squares: 8
+  board_thickness_mm: 15.0
+
+# Board surface colors (for vision calibration)
+colors:
+  light_square_hsv_range:
+    lower: [15, 30, 150]
+    upper: [40, 120, 255]
+  dark_square_hsv_range:
+    lower: [15, 30, 40]
+    upper: [40, 120, 150]
+
+# Piece geometry (FIDE Staunton standard, mm)
+pieces:
+  pawn:
+    height_mm: 46
+    base_diameter_mm: 26
+    grip_diameter_mm: 18
+    mass_g: 30
+  knight:
+    height_mm: 57
+    base_diameter_mm: 28
+    grip_diameter_mm: 22
+    mass_g: 45
+  bishop:
+    height_mm: 65
+    base_diameter_mm: 28
+    grip_diameter_mm: 20
+    mass_g: 40
+  rook:
+    height_mm: 48
+    base_diameter_mm: 30
+    grip_diameter_mm: 24
+    mass_g: 50
+  queen:
+    height_mm: 75
+    base_diameter_mm: 30
+    grip_diameter_mm: 22
+    mass_g: 55
+  king:
+    height_mm: 95
+    base_diameter_mm: 30
+    grip_diameter_mm: 22
+    mass_g: 60
+
+# Captured piece tray
+tray:
+  side: "right"               # relative to White's perspective
+  offset_from_board_mm: 100   # gap between board edge and tray
+  slot_spacing_mm: 35
+  layout: "2x8"               # 2 columns, 8 rows

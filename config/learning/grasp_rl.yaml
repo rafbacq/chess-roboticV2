@@ -1,0 +1,67 @@
+# RL Grasp Training Configuration
+
+training:
+  algorithm: "PPO"
+  total_timesteps: 1_000_000
+  learning_rate: 3.0e-4
+  batch_size: 64
+  n_steps: 2048
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  vf_coef: 0.5
+
+network:
+  policy_net: [256, 256]
+  value_net: [256, 256]
+  activation: "ReLU"
+
+environment:
+  n_envs: 8
+  max_steps: 200
+  dt: 0.02
+
+  # Observation noise
+  piece_pose_noise_xy_m: 0.005
+  piece_pose_noise_z_m: 0.002
+  piece_pose_noise_yaw_rad: 0.05
+
+  # Domain randomization
+  dr_piece_friction: [0.3, 1.0]
+  dr_gripper_friction: [0.5, 1.2]
+  dr_piece_scale: [0.95, 1.05]
+  dr_table_height_m: [-0.002, 0.002]
+
+rewards:
+  success: 10.0
+  contact: 2.0
+  per_step: -0.5
+  collision: -5.0
+  knockover: -10.0
+  distance_shaped: 1.0
+
+evaluation:
+  eval_freq_steps: 50_000
+  eval_episodes: 100
+
+logging:
+  log_dir: "logs/grasp_training"
+  save_dir: "models/grasp"
+  save_freq_steps: 100_000
+  use_wandb: false
+  wandb_project: "chess-robotic-rl"
+
+curriculum:
+  enabled: false
+  stages:
+    - name: "large_pieces"
+      piece_types: ["KING", "QUEEN", "ROOK"]
+      steps: 300_000
+    - name: "medium_pieces"
+      piece_types: ["BISHOP", "KNIGHT"]
+      steps: 300_000
+    - name: "small_pieces"
+      piece_types: ["PAWN"]
+      steps: 400_000

@@ -1,0 +1,76 @@
+# Chess-Robotic V2 — Master Configuration
+# This is the top-level config that references hardware, perception,
+# calibration, and learning sub-configs.
+
+system:
+  name: "chess-robotic-v2"
+  version: "0.1.0"
+  log_level: "INFO"   # DEBUG, INFO, WARNING, ERROR
+  log_dir: "logs"
+
+# Board state mode: "dgt" or "vision"
+board_state_mode: "vision"
+
+# Hardware configuration
+hardware:
+  arm_type: "simulated"        # simulated, xarm6, franka_fr3, ur3e, so100
+  gripper_type: "simulated"    # simulated, xarm_gripper, franka_hand, custom
+  arm_config_file: "config/hardware/xarm6.yaml"
+
+# Board configuration
+board:
+  square_size_mm: 57.0         # FIDE tournament standard
+  board_thickness_mm: 15.0
+  board_height_mm: 0.0         # height of board surface above ref plane
+  tray_side: "right"           # captured piece tray position
+  tray_offset_mm: 100.0
+
+# Chess engine
+engine:
+  stockfish_path: "stockfish"  # path to stockfish binary
+  depth: 15
+  time_limit_ms: 2000
+  threads: 2
+  hash_mb: 256
+  skill_level: 20              # 0-20
+  # elo_limit: 1500            # uncomment to cap ELO
+
+# Perception
+perception:
+  camera_type: "rgb"           # rgb, rgbd
+  camera_config_file: "config/perception/camera_rgb.yaml"
+  use_apriltags: true
+  apriltag_family: "tag36h11"
+  piece_detection_model: "occupancy"  # occupancy, classification
+  confidence_threshold: 0.8
+
+# Calibration
+calibration:
+  method: "apriltag"           # apriltag, checkerboard, manual
+  calibration_data_dir: "data/calibration"
+  auto_load: true              # auto-load saved calibration on startup
+
+# Motion planning
+motion_planning:
+  planner: "RRTConnect"        # RRTConnect, PRM, BiTRRT
+  planning_time_s: 5.0
+  max_velocity_scaling: 0.3
+  max_acceleration_scaling: 0.3
+  near_board_velocity_scaling: 0.15
+  approach_retreat_velocity_ms: 0.03  # Cartesian linear speed near board
+
+# Manipulation
+manipulation:
+  safe_height_m: 0.15
+  lift_height_m: 0.12
+  approach_clearance_m: 0.05
+  place_clearance_m: 0.003
+  grasp_force_n: 10.0
+
+# Learning (optional — system works without this)
+learning:
+  enabled: false
+  use_learned_grasp: false
+  grasp_model_path: "models/grasp_policy.pt"
+  use_learned_placement: false
+  placement_model_path: "models/placement_policy.pt"

@@ -1,0 +1,56 @@
+# SO-100 / Low-cost Educational Arm Configuration
+
+arm:
+  name: "so100"
+  type: "so100"
+  dof: 6
+  serial_port: "COM4"  # or /dev/ttyUSB0
+
+  max_joint_velocity_rads: 1.57
+  max_cartesian_velocity_ms: 0.1
+  max_payload_kg: 0.3
+  max_reach_m: 0.30
+  repeatability_mm: 2.0
+
+  default_velocity_scale: 0.2
+  default_acceleration_scale: 0.15
+  near_board_velocity_scale: 0.08
+
+  home_position_deg: [0, -45, 90, -45, 0, 0]
+  safe_position_deg: [0, -30, 70, -30, 0, 0]
+
+  collision_sensitivity: 0  # no built-in collision detection
+  has_force_torque: false
+  has_collision_detection: false
+
+gripper:
+  name: "so100_gripper"
+  type: "servo_gripper"
+  min_width_mm: 0
+  max_width_mm: 55
+  max_force_n: 5
+  default_speed: 0.3
+  default_force_n: 3
+
+  grip_presets:
+    pawn: {width_mm: 18, force_n: 2}
+    knight: {width_mm: 22, force_n: 3}
+    bishop: {width_mm: 20, force_n: 3}
+    rook: {width_mm: 24, force_n: 3}
+    queen: {width_mm: 22, force_n: 3}
+    king: {width_mm: 22, force_n: 3}
+
+tool_offset:
+  x_mm: 0
+  y_mm: 0
+  z_mm: 80
+  roll_deg: 0
+  pitch_deg: 0
+  yaw_deg: 0
+
+# Notes for SO-100:
+# - Very limited payload (300g max) — chess pieces are fine
+# - Lower repeatability — may need vision-based correction
+# - No force/torque sensing — rely on visual verification
+# - Consider slower operations and larger safety margins
+# - Smaller board / plastic pieces recommended

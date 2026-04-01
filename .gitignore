@@ -1,0 +1,63 @@
+# Chess-Robotic V2
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Logs and data
+logs/
+data/
+*.log
+
+# Models and checkpoints
+models/
+checkpoints/
+*.pt
+*.pth
+*.onnx
+*.jit
+
+# Simulation
+*.usd
+*.usda
+*.usdc
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary
+*.tmp
+test_output.txt
+
+# Calibration data (may contain sensitive geometry)
+# Uncomment if needed:
+# data/calibration/
+
+# W&B
+wandb/

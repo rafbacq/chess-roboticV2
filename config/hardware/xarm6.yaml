@@ -1,0 +1,61 @@
+# UFACTORY xArm 6 Configuration
+
+arm:
+  name: "xarm6"
+  type: "xarm6"
+  dof: 6
+  ip_address: "192.168.1.100"
+
+  # Kinematic limits
+  max_joint_velocity_rads: 3.14
+  max_cartesian_velocity_ms: 0.5
+  max_payload_kg: 5.0
+  max_reach_m: 0.70
+  repeatability_mm: 0.1
+
+  # Default speed scaling
+  default_velocity_scale: 0.3
+  default_acceleration_scale: 0.3
+  near_board_velocity_scale: 0.15
+
+  # Home position (joint angles in degrees)
+  home_position_deg: [0, -30, 0, 30, 0, 60]
+
+  # Safe pre-game position
+  safe_position_deg: [0, -45, 0, 45, 0, 90]
+
+  # Collision detection
+  collision_sensitivity: 3  # 0-5, higher = more sensitive
+
+gripper:
+  name: "xarm_gripper"
+  type: "xarm_gripper"
+  min_width_mm: 0
+  max_width_mm: 85
+  max_force_n: 40
+  default_speed: 0.5
+  default_force_n: 10
+
+  # Chess piece grip presets
+  grip_presets:
+    pawn: {width_mm: 18, force_n: 8}
+    knight: {width_mm: 22, force_n: 10}
+    bishop: {width_mm: 20, force_n: 10}
+    rook: {width_mm: 24, force_n: 12}
+    queen: {width_mm: 22, force_n: 10}
+    king: {width_mm: 22, force_n: 10}
+
+# End-effector tool offset (from flange to gripper TCP)
+tool_offset:
+  x_mm: 0
+  y_mm: 0
+  z_mm: 174  # typical xArm gripper length
+  roll_deg: 0
+  pitch_deg: 0
+  yaw_deg: 0
+
+# URDF/SRDF paths (relative to robot_model/)
+model:
+  urdf: "urdf/xarm6.urdf"
+  srdf: "srdf/xarm6.srdf"
+  moveit_config: "config/xarm6_moveit.yaml"
