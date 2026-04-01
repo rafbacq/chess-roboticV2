@@ -122,8 +122,12 @@ class BoardDetector:
             return BoardDetectionResult(found=False, method="apriltag")
 
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        
+        # Apply CLAHE to improve contrast under uneven lighting
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        gray = clahe.apply(gray)
 
-        detector = Detector(families="tag36h11")
+        detector = Detector(families="tag36h11", nthreads=2, quad_decimate=1.0)
         detections = detector.detect(gray)
 
         # Find our 4 target tag IDs
@@ -133,10 +137,12 @@ class BoardDetector:
                 tag_centers[det.tag_id] = det.center
 
         if len(tag_centers) < 4:
-            logger.debug(f"Only found {len(tag_centers)}/4 AprilTags")
+            logger.debug(f"Only found {len(tag_centers)}/4 AprilTags. Board might be occluded or lighting is poor.")
+            # For robustness, we could estimate missing corners here if >=3 are found using geometric properties of a square board.
+            # But for safety, we currently reject partial detections to prevent invalid manipulation trajectories.
             return BoardDetectionResult(found=False, method="apriltag")
 
-        # Order: a1, h1, h8, a8
+        # Order: a1, h1, h8, a8 ensures consistent board coordinate orientation
         try:
             corners = np.array([
                 tag_centers[self._apriltag_ids[0]],
@@ -144,11 +150,15 @@ class BoardDetector:
                 tag_centers[self._apriltag_ids[2]],
                 tag_centers[self._apriltag_ids[3]],
             ], dtype=np.float32)
-        except KeyError:
+        except KeyError as e:
+            logger.error(f"Missing AprilTag ID: {e}")
             return BoardDetectionResult(found=False, method="apriltag")
 
         ideal_corners = self._get_ideal_corners()
-        H, _ = cv2.findHomography(corners, ideal_corners)
+        H, _ = cv2.findHomography(corners, ideal_corners, method=cv2.RANSAC, ransacReprojThreshold=5.0)
+
+        if H is None:
+            return BoardDetectionResult(found=False, method="apriltag")
 
         return BoardDetectionResult(
             found=True,

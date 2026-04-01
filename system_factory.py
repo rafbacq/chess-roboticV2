@@ -32,15 +32,19 @@ from robot_model.arm_interface import (
     SimulatedArm,
     SimulatedGripper,
 )
+from robot_model.xarm6_driver import XArm6Arm, XArmGripper
+from motion_planning.moveit2_planner import MoveIt2Planner
 
 logger = logging.getLogger(__name__)
 
 # Registry of known hardware drivers (type_name -> class)
 _ARM_DRIVERS: dict[str, type] = {
     "simulated": SimulatedArm,
+    "xarm6": XArm6Arm,
 }
 _GRIPPER_DRIVERS: dict[str, type] = {
     "simulated": SimulatedGripper,
+    "xarm_gripper": XArmGripper,
 }
 
 
