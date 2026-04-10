@@ -46,7 +46,7 @@ cd chess-roboticV2
 # Install core dependencies
 pip install -e ".[dev]"
 
-# Run the full test suite (170 tests)
+# Run the full test suite (193 tests)
 python -m pytest -v
 
 # Launch the CLI (play, train, evaluate, calibrate)
@@ -110,7 +110,7 @@ chess-roboticV2/
 
 ## Tests
 
-The project has **170 passing tests** covering:
+The project has **193 passing tests** covering:
 - Chess core (engine, game manager, move parsing)
 - Board state model and coordinate transforms
 - Perception (camera, piece detection, move verification)
@@ -118,7 +118,9 @@ The project has **170 passing tests** covering:
 - Motion planning (waypoint planner, MoveIt 2 fallback)
 - Hardware drivers (xArm6 mock mode, simulated arm/gripper)
 - Calibration pipeline (intrinsic, extrinsic)
-- RL environments (ChessGraspEnv)
+- RL environments (ChessGraspEnv, ChessPlacementEnv)
+- RL evaluation harness
+- Execution module (trajectory, telemetry, watchdog)
 - System factory and orchestrator integration
 - Simulation (PyBullet arm adapter)
 
@@ -127,6 +129,9 @@ The project has **170 passing tests** covering:
 See `docs/` for:
 - [Architecture Overview](docs/architecture.md)
 - [Frame Conventions](docs/frame_conventions.md)
+- [Calibration Guide](docs/calibration_guide.md)
+- [Hardware Setup](docs/hardware_setup.md)
+- [RL Guide](docs/rl_guide.md)
 
 ## License
 

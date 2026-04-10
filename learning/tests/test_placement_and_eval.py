@@ -53,22 +53,25 @@ class TestPlacementEnv:
 
     def test_successful_placement(self):
         env = ChessPlacementEnv(
+            max_steps=80,
             position_noise_m=0.0,
             success_threshold_m=0.01,
         )
-        obs, _ = env.reset(seed=0)
-        # Piece should be nearly centered since noise=0
-        # Descend and release
-        for _ in range(10):
-            action = np.array([0.0, 0.0, -1.0, 0.0], dtype=np.float32)  # go down
+        obs, info = env.reset(seed=0)
+        # Piece starts above board, descent rate is 2mm/step (action=-1 → -0.002m)
+        # Descend until ee_height drops below 10mm, then release
+        terminated = False
+        for step in range(60):
+            action = np.array([0.0, 0.0, -1.0, 0.0], dtype=np.float32)
             obs, reward, terminated, truncated, info = env.step(action)
-            if terminated:
+            if terminated or truncated:
                 break
-        # Now release
-        if not terminated:
-            action = np.array([0.0, 0.0, 0.0, -1.0], dtype=np.float32)  # open gripper
-            obs, reward, terminated, truncated, info = env.step(action)
-            assert info["placed"]
+            # Once low enough, release
+            if info["height_mm"] < 10.0:
+                action = np.array([0.0, 0.0, 0.0, -1.0], dtype=np.float32)
+                obs, reward, terminated, truncated, info = env.step(action)
+                break
+        assert info["placed"], f"Placement failed: height={info['height_mm']:.1f}mm, offset={info['offset_mm']:.1f}mm"
         env.close()
 
     def test_holding_flag(self):
