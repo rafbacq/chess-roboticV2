@@ -127,8 +127,11 @@ class SystemFactory:
         # Initialize hardware
         if not arm.is_ready():
             arm.initialize()
-        if not gripper.is_ready():
+        # GripperInterface has no is_ready — use get_status check
+        from robot_model.arm_interface import GripperStatus
+        if gripper.get_status() == GripperStatus.ERROR or not hasattr(gripper, '_initialized') or not getattr(gripper, '_initialized', False):
             gripper.initialize()
+
 
         # Transform
         T_robot_board = self._load_calibration(cfg.get("calibration", {}))

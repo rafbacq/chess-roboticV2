@@ -1,0 +1,23 @@
+﻿...........................FF...........FFF...........                   [100%]
+================================== FAILURES ===================================
+E   TypeError: ChessMove.__init__() missing 1 required positional argument: 'color'
+----------------------------- Captured log setup ------------------------------
+WARNING  motion_planning.moveit2_planner:moveit2_planner.py:71 ROS 2 (rclpy) not found. MoveIt2Planner will operate in fallback mode.
+C:\Users\tdc65\chess-roboticV2\motion_planning\tests\test_moveit2_planner.py:76: TypeError: ChessMove.__init__() missing 1 required positional argument: 'color'
+E   TypeError: ChessMove.__init__() missing 1 required positional argument: 'color'
+----------------------------- Captured log setup ------------------------------
+WARNING  motion_planning.moveit2_planner:moveit2_planner.py:71 ROS 2 (rclpy) not found. MoveIt2Planner will operate in fallback mode.
+C:\Users\tdc65\chess-roboticV2\motion_planning\tests\test_moveit2_planner.py:93: TypeError: ChessMove.__init__() missing 1 required positional argument: 'color'
+E   TypeError: ChessMove.__init__() missing 1 required positional argument: 'color'
+C:\Users\tdc65\chess-roboticV2\perception\tests\test_perception.py:159: TypeError: ChessMove.__init__() missing 1 required positional argument: 'color'
+E   TypeError: ChessMove.__init__() missing 1 required positional argument: 'color'
+C:\Users\tdc65\chess-roboticV2\perception\tests\test_perception.py:174: TypeError: ChessMove.__init__() missing 1 required positional argument: 'color'
+E   TypeError: ChessMove.__init__() missing 1 required positional argument: 'color'
+C:\Users\tdc65\chess-roboticV2\perception\tests\test_perception.py:191: TypeError: ChessMove.__init__() missing 1 required positional argument: 'color'
+=========================== short test summary info ===========================
+FAILED motion_planning/tests/test_moveit2_planner.py::TestMoveIt2PlannerFallback::test_plan_pick_place
+FAILED motion_planning/tests/test_moveit2_planner.py::TestMoveIt2PlannerFallback::test_stages_have_labels
+FAILED perception/tests/test_perception.py::TestMoveVerifier::test_verify_no_before_image
+FAILED perception/tests/test_perception.py::TestMoveVerifier::test_verify_successful_move
+FAILED perception/tests/test_perception.py::TestMoveVerifier::test_verify_no_change_fails
+5 failed, 49 passed in 1.00s

@@ -120,14 +120,14 @@ class MoveIt2Planner(MotionPlannerInterface):
             return self._fallback.plan_pick_place(request)
             
         t0 = time.time()
-        self._update_planning_scene(request.occupancy_map)
+        # In a real deployment, we'd query the perception pipeline for
+        # the current occupancy and push collision objects here.
         
-        # We rely on the fallback structure for stages but in real deployment,
-        # MoveIt handles smooth continuous splines.
         logger.info(f"MoveIt 2 planning pick & place for {request.move.uci_string}")
         result = self._fallback.plan_pick_place(request)
         result.planning_time_s = time.time() - t0
         return result
+
 
     def _update_planning_scene(self, occupancy_map: dict[str, bool]) -> None:
         """

@@ -9,18 +9,17 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
-from pathlib import Path
+from dataclasses import dataclass, field
 from typing import Optional
 
 import cv2
 import numpy as np
 
 from chess_core.interfaces import ChessMove, VerificationResult
-from perception.board_detector import BoardDetector, BoardDetectorConfig
+from perception.board_detector import BoardDetector
 from perception.camera_interface import CameraInterface
 from perception.move_verifier import MoveVerifier, VerificationConfig
-from perception.piece_detector import PieceDetector, PieceDetectorConfig
+from perception.piece_detector import PieceDetector
 
 logger = logging.getLogger(__name__)
 
@@ -28,19 +27,16 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PerceptionConfig:
     """Configuration for the perception pipeline."""
-    board_detector: BoardDetectorConfig = None
-    piece_detector: PieceDetectorConfig = None
-    verifier: VerificationConfig = None
+    # Board detection
+    detection_method: str = "corners"  # corners, apriltag, lines
+    # Piece detection
+    occupancy_threshold: float = 30.0
+    color_threshold: float = 50.0
+    # Verification
+    verifier: VerificationConfig = field(default_factory=VerificationConfig)
+    # Image processing
     warp_size: int = 512  # warped board image size (pixels)
     capture_delay_s: float = 0.5  # delay before capture for settling
-
-    def __post_init__(self):
-        if self.board_detector is None:
-            self.board_detector = BoardDetectorConfig()
-        if self.piece_detector is None:
-            self.piece_detector = PieceDetectorConfig()
-        if self.verifier is None:
-            self.verifier = VerificationConfig()
 
 
 class PerceptionManager:
@@ -70,8 +66,11 @@ class PerceptionManager:
         self.config = config or PerceptionConfig()
         self.camera = camera
 
-        self.board_detector = BoardDetector(self.config.board_detector)
-        self.piece_detector = PieceDetector(self.config.piece_detector)
+        self.board_detector = BoardDetector(method=self.config.detection_method)
+        self.piece_detector = PieceDetector(
+            occupancy_threshold=self.config.occupancy_threshold,
+            color_threshold=self.config.color_threshold,
+        )
         self.verifier = MoveVerifier(self.config.verifier)
 
         self._warp_matrix: Optional[np.ndarray] = None
@@ -90,23 +89,23 @@ class PerceptionManager:
             return None
 
         # Detect board
-        corners = self.board_detector.detect(image)
-        if corners is None or len(corners) < 4:
+        result = self.board_detector.detect(image)
+        if not result.found or result.corners is None:
             logger.warning("Board detection failed")
             return None
 
-        self._corners = corners
+        self._corners = result.corners
 
         # Warp to top-down
-        warped = self._warp_board(image, corners)
+        warped = self.board_detector.warp_board(image, result, self.config.warp_size)
         if warped is None:
             return None
 
         self._last_warped = warped
 
         # Detect pieces
-        occupancy = self.piece_detector.detect_occupancy(warped)
-        return occupancy
+        analysis = self.piece_detector.detect(warped)
+        return analysis.get_occupancy_map()
 
     def get_occupancy(self) -> Optional[dict[str, bool]]:
         """Get current board occupancy from camera."""
@@ -125,16 +124,16 @@ class PerceptionManager:
         if image is None:
             return False
 
-        corners = self.board_detector.detect(image)
-        if corners is None or len(corners) < 4:
+        result = self.board_detector.detect(image)
+        if not result.found or result.corners is None:
             return False
 
-        warped = self._warp_board(image, corners)
+        warped = self.board_detector.warp_board(image, result, self.config.warp_size)
         if warped is None:
             return False
 
-        occupancy = self.piece_detector.detect_occupancy(warped)
-        self.verifier.capture_before(warped, occupancy)
+        analysis = self.piece_detector.detect(warped)
+        self.verifier.capture_before(warped, analysis.get_occupancy_map())
         self._last_warped = warped
 
         logger.debug("Before-move state captured for verification")
@@ -159,14 +158,16 @@ class PerceptionManager:
                 mismatch_details="Camera capture failed",
             )
 
-        corners = self.board_detector.detect(image)
-        if corners is None or len(corners) < 4:
+        det_result = self.board_detector.detect(image)
+        if not det_result.found or det_result.corners is None:
             return VerificationResult(
                 success=False,
                 mismatch_details="Board detection failed for verification",
             )
 
-        warped = self._warp_board(image, corners)
+        warped = self.board_detector.warp_board(
+            image, det_result, self.config.warp_size
+        )
         if warped is None:
             return VerificationResult(
                 success=False,
@@ -179,38 +180,36 @@ class PerceptionManager:
         """Get the last warped board image for display."""
         return self._last_warped
 
+    def calibrate_empty_board(self) -> bool:
+        """
+        Capture images of an empty board to calibrate the piece detector.
+
+        Returns:
+            True if calibration succeeded.
+        """
+        image = self._capture()
+        if image is None:
+            return False
+
+        result = self.board_detector.detect(image)
+        if not result.found:
+            return False
+
+        warped = self.board_detector.warp_board(image, result, self.config.warp_size)
+        if warped is None:
+            return False
+
+        self.piece_detector.calibrate_empty_board(warped)
+        logger.info("Perception pipeline calibrated with empty board")
+        return True
+
     def _capture(self) -> Optional[np.ndarray]:
         """Capture a frame from the camera."""
         try:
-            frame = self.camera.capture()
+            frame = self.camera.get_frame()
             if frame is None:
                 logger.warning("Camera returned None")
             return frame
         except Exception as e:
             logger.error(f"Camera capture failed: {e}")
             return None
-
-    def _warp_board(
-        self,
-        image: np.ndarray,
-        corners: np.ndarray,
-    ) -> Optional[np.ndarray]:
-        """Warp the detected board region to a square top-down view."""
-        if len(corners) < 4:
-            return None
-
-        size = self.config.warp_size
-        dst_pts = np.array([
-            [0, size],
-            [size, size],
-            [size, 0],
-            [0, 0],
-        ], dtype=np.float32)
-
-        src_pts = corners[:4].astype(np.float32).reshape(-1, 2)
-
-        M = cv2.getPerspectiveTransform(src_pts, dst_pts)
-        warped = cv2.warpPerspective(image, M, (size, size))
-        self._warp_matrix = M
-
-        return warped

@@ -121,8 +121,8 @@ def run_training(total_steps: int, eval_episodes: int, output_dir: str):
     # Environment config
     env_config = GraspEnvConfig(
         max_steps=50,
-        pos_noise_std=0.005,
-        orn_noise_std=0.02,
+        piece_pose_noise_xy_m=0.005,
+        piece_pose_noise_yaw_rad=0.02,
     )
 
     # =========================================================================
