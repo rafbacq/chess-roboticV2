@@ -1,26 +1,26 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools~=82.0", "wheel~=0.46"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "chess-robotic"
-version = "0.1.0"
-description = "Chess-playing robotic arm with CV, classical manipulation, and optional RL"
+version = "0.2.0"
+description = "Chess-playing robotic arm/gantry with CV, classical manipulation, and optional RL"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.13"
 authors = [
     {name = "Chess Robotic Team"},
 ]
 
 dependencies = [
-    "numpy>=1.24",
-    "opencv-python>=4.8",
-    "python-chess>=1.999",
-    "pydantic>=2.0",
-    "PyYAML>=6.0",
-    "scipy>=1.11",
-    "transforms3d>=0.4",
+    "numpy~=2.4",
+    "opencv-python~=4.13",
+    "python-chess~=1.999",
+    "pydantic~=2.13",
+    "PyYAML~=6.0",
+    "scipy~=1.17",
+    "transforms3d~=0.4",
 ]
 
 [project.optional-dependencies]
@@ -28,21 +28,35 @@ sim = [
     "pybullet>=3.2",
 ]
 learning = [
-    "torch>=2.1",
-    "stable-baselines3>=2.0",
-    "gymnasium>=0.29",
-    "tensorboard>=2.14",
-    "wandb>=0.15",
+    "torch>=2.6",
+    "torchvision>=0.21",
+    "stable-baselines3~=2.8",
+    "gymnasium~=1.2",
+    "tensorboard~=2.20",
+    "wandb~=0.26",
+]
+hardware = [
+    "pyserial~=3.5",
+]
+mlops = [
+    "mlflow~=2.22",
+    "dvc~=3.59",
+    "hydra-core~=1.3",
+    "optuna~=4.3",
+]
+monitoring = [
+    "structlog~=25.4",
+    "gradio~=5.29",
 ]
 dev = [
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-    "ruff>=0.1",
-    "mypy>=1.5",
-    "pre-commit>=3.0",
+    "pytest~=9.0",
+    "pytest-cov~=7.1",
+    "ruff~=0.15",
+    "mypy~=1.20",
+    "pre-commit~=4.6",
 ]
 all = [
-    "chess-robotic[sim,learning,dev]",
+    "chess-robotic[sim,learning,hardware,mlops,monitoring,dev]",
 ]
 
 [tool.setuptools.packages.find]
@@ -58,11 +72,13 @@ include = [
     "simulation*",
     "learning*",
     "ui_tools*",
+    "mlops*",
+    "benchmarks*",
 ]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
@@ -86,7 +102,7 @@ python_files = "test_*.py"
 python_functions = "test_*"
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
