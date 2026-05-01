@@ -8,7 +8,7 @@ version = "0.2.0"
 description = "Chess-playing robotic arm/gantry with CV, classical manipulation, and optional RL"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.10,<3.13"
 authors = [
     {name = "Chess Robotic Team"},
 ]

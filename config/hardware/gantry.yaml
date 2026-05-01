@@ -5,19 +5,34 @@
 # This config is loaded by GantryConfig in robot_model/gantry_driver.py.
 
 serial:
-  port: "COM3"            # Windows; /dev/ttyACM0 in WSL2
+  port: "/dev/ttyACM0"     # WSL2 via usbipd; COM3 on native Windows
   baudrate: 115200
+  ack_timeout_s: 1.0
+  reconnect_delay_s: 2.0
+
+# Steps per mm (NEMA17 1.8° + 1/16 µstep + GT2 20T pulley)
+# 200 steps/rev × 16 µstep = 3200 µsteps/rev
+# GT2 20T = 40mm/rev → 80 µsteps/mm
+steps_per_mm:
+  x: 80.0
+  y: 80.0
+  z: 80.0   # Adjust if Z uses lead screw
+
+# Max speeds (mm/s)
+max_speed:
+  x: 100.0
+  y: 100.0
+  z: 30.0
 
 board:
-  # Origin of A1 square corner relative to home position (mm)
+  # Origin of a1 square center relative to home position (mm)
   origin_x_mm: 30.0
   origin_y_mm: 30.0
-  # Side length of one chess square (mm)
-  square_size_mm: 33.0    # Standard tournament: 50-65mm
-                          # Adjust after calibration
+  # FIDE tournament standard square size
+  square_size_mm: 57.0
 
 z_heights:
-  safe_mm: 50.0           # Transit height (clear all pieces)
+  safe_mm: 50.0           # Transit height (clear all pieces: king=95mm but gantry Z < that)
   board_surface_mm: 5.0   # Board surface level
   pickup_mm: 2.0          # Magnet engagement height
   place_mm: 3.0           # Piece release height
@@ -28,7 +43,11 @@ tray:
 
 motion:
   move_timeout_s: 15.0
-  keepalive_interval_s: 1.0
+  keepalive_interval_s: 0.5
+
+magnet:
+  settle_ms: 100          # Wait after energizing before lifting
+  release_ms: 50          # Wait after de-energizing before moving
 
 safety:
   x_min_mm: 0.0
@@ -39,6 +58,8 @@ safety:
   z_max_mm: 60.0
   max_magnet_on_duration_s: 60.0
   halt_response_ms: 100.0
+  heartbeat_interval_s: 0.5
+  heartbeat_timeout_s: 2.0
 
 # Backend selection
 backend: "gantry"         # "gantry" or "simulated"

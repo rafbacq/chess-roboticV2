@@ -75,12 +75,73 @@ class GantryArm(ArmInterface):
         self,
         config: GantryConfig | None = None,
         bridge: Optional["HardwareBridge"] = None,
+        name: str = "gantry",
     ) -> None:
         self.config = config or GantryConfig()
         self._bridge = bridge
+        self._name = name
         self._connected = False
         self._homed = False
         self._current_pos = np.zeros(3)  # X, Y, Z in mm
+
+    # =========================================================================
+    # ArmInterface required methods
+    # =========================================================================
+
+    def initialize(self) -> bool:
+        """Initialize = connect to serial bridge."""
+        return self.connect()
+
+    def shutdown(self) -> None:
+        """Shutdown = disconnect from serial bridge."""
+        self.disconnect()
+
+    def get_status(self):
+        """Get current arm status."""
+        from robot_model.arm_interface import ArmStatus
+        if not self._connected:
+            return ArmStatus.NOT_INITIALIZED
+        if not self._homed:
+            return ArmStatus.NOT_INITIALIZED
+        if self.is_moving():
+            return ArmStatus.MOVING
+        return ArmStatus.READY
+
+    def get_capabilities(self):
+        from robot_model.arm_interface import ArmCapabilities
+        return ArmCapabilities(
+            name=self._name, dof=3, max_reach_m=0.3,
+            max_payload_kg=0.5, max_joint_velocity_rads=0.0,
+            max_cartesian_velocity_ms=0.1, repeatability_mm=0.5,
+        )
+
+    def get_joint_velocities(self) -> np.ndarray:
+        return np.zeros(3)
+
+    def get_ee_pose(self) -> np.ndarray:
+        return self.get_current_pose()
+
+    def move_to_joint_positions(
+        self, positions: np.ndarray,
+        velocity_scale: float = 0.3,
+        acceleration_scale: float = 0.3,
+    ) -> bool:
+        """Move to XYZ positions (prismatic joints)."""
+        if len(positions) >= 3:
+            return self._move_to(positions[0], positions[1], positions[2])
+        return False
+
+    def stop(self) -> None:
+        self.emergency_stop()
+
+    def recover_from_error(self) -> bool:
+        if self._bridge:
+            result = self._bridge.send_command("RESET", timeout_s=2.0)
+            return result is not None
+        return False
+
+    def is_ready(self) -> bool:
+        return self._connected and self._homed
 
     def connect(self) -> bool:
         """Connect to the gantry via serial bridge."""
@@ -312,7 +373,7 @@ class GantryArm(ArmInterface):
     def _set_magnet(self, on: bool) -> None:
         """Control the electromagnet."""
         if self._bridge:
-            self._bridge.send_command(f"MAGNET {1 if on else 0}", timeout_s=1.0)
+            self._bridge.send_command(f"MAG {'ON' if on else 'OFF'}", timeout_s=1.0)
 
 
 class GantryGripper(GripperInterface):
@@ -322,22 +383,53 @@ class GantryGripper(GripperInterface):
     Maps gripper open/close to magnet off/on.
     """
 
-    def __init__(self, gantry: GantryArm) -> None:
+    def __init__(self, gantry: GantryArm | None = None) -> None:
         self._gantry = gantry
+        self._magnet_on = False
+        self._initialized = False
 
-    def open(self, width_mm: float = 0) -> None:
+    def initialize(self) -> bool:
+        self._initialized = True
+        return True
+
+    def shutdown(self) -> None:
+        if self._gantry:
+            self._gantry._set_magnet(False)
+        self._initialized = False
+
+    def get_status(self):
+        from robot_model.arm_interface import GripperStatus
+        if self._magnet_on:
+            return GripperStatus.GRIPPING
+        return GripperStatus.OPEN
+
+    def get_capabilities(self):
+        from robot_model.arm_interface import GripperCapabilities
+        return GripperCapabilities(
+            name="electromagnet", min_width_mm=0.0,
+            max_width_mm=0.0, max_force_n=0.0,
+        )
+
+    def open(self, width_mm: float | None = None, speed: float = 0.5) -> bool:
         """Release piece (magnet off)."""
-        self._gantry._set_magnet(False)
+        if self._gantry:
+            self._gantry._set_magnet(False)
+        self._magnet_on = False
+        return True
 
-    def close(self, force_n: float = 0, width_mm: float = 0) -> None:
+    def close(
+        self, force_n: float | None = None,
+        width_mm: float | None = None, speed: float = 0.3,
+    ) -> bool:
         """Grab piece (magnet on)."""
-        self._gantry._set_magnet(True)
+        if self._gantry:
+            self._gantry._set_magnet(True)
+        self._magnet_on = True
+        return True
 
     def is_gripping(self) -> bool:
         """Check if magnet is energized. Cannot verify actual pickup."""
-        # For a real system, you'd need a Hall effect sensor or
-        # current sense on the magnet coil.
-        return True  # Optimistic — we have no feedback sensor
+        return self._magnet_on
 
     def get_width_mm(self) -> float:
         """N/A for electromagnet. Return 0."""

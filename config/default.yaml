@@ -13,8 +13,8 @@ board_state_mode: "vision"
 
 # Hardware configuration
 hardware:
-  arm_type: "simulated"        # simulated, xarm6, franka_fr3, ur3e, so100
-  gripper_type: "simulated"    # simulated, xarm_gripper, franka_hand, custom
+  arm_type: "simulated"        # simulated, xarm6, franka_fr3, ur3e, so100, gantry
+  gripper_type: "simulated"    # simulated, xarm_gripper, franka_hand, custom, electromagnet
   arm_config_file: "config/hardware/xarm6.yaml"
 
 # Board configuration
