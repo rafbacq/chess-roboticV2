@@ -1,144 +1,97 @@
-# Serial Protocol — Chess Gantry Robot v2.0
+# Gantry Serial Protocol v2.1
 
-## Overview
+## Transport
+- **Interface**: USB CDC serial (Pico native USB)
+- **Baud**: 115200
+- **Line ending**: `\n` (newline-terminated)
+- **Encoding**: ASCII
 
-Line-based ASCII protocol over USB serial at **115200 baud**.
-Each line ends with `\n`. Commands are sequence-numbered for reliable acking.
-
-## Message Types
-
-| Direction | Prefix | Format |
-|-----------|--------|--------|
-| Host → Pico | (none) | `<seq> <CMD> [args...]` |
-| Pico → Host | `ACK` | `ACK <seq> <OK\|ERR\|DONE> [detail]` |
-| Pico → Host | `EVT` | `EVT <event> [detail]` |
-
-## Commands (Host → Pico)
-
-### PING
+## Command Format
 ```
-42 PING
-→ ACK 42 OK PONG
+<seq> <CMD> [args...]
 ```
-Keepalive / connectivity check.
+- `<seq>`: Monotonic uint16 sequence number (host assigns, firmware echoes)
+- `<CMD>`: Command name (uppercase)
 
-### STATUS
+## Response Format
 ```
-43 STATUS
-→ ACK 43 OK STATE=4 HOMED=1 X=100.00 Y=150.00 Z=10.00 MAG=0
+OK <seq> [detail]       — Command accepted
+DONE <seq> [detail]     — Async command completed
+ERR:<code> <seq>        — Error
+EVT:<type> [detail]     — Unsolicited event
 ```
-Returns current state, position, and magnet status.
 
-### HOME
-```
-44 HOME
-→ ACK 44 OK HOMING_STARTED
-→ EVT HOMING Z_START
-→ EVT HOMING Z_HIT
-→ EVT HOMING X_START
-→ EVT HOMING X_HIT
-→ EVT HOMING Y_START
-→ EVT HOMING Y_HIT
-→ EVT HOMING BACKOFF_START
-→ EVT HOMED ALL_AXES
-```
-Home all axes (Z first for safety, then X, then Y).
-Homing uses endstop detection with 3mm backoff.
+## Commands
 
-### MOVE
-```
-45 MOVE X100.0 Y200.0 Z10.0
-→ ACK 45 OK TARGET X100.0 Y200.0 Z10.0
-→ EVT MOVE_DONE AT X100.00 Y200.00 Z10.00
-```
-Absolute move to (X, Y, Z) in millimeters.
-Coordinates are clamped to travel limits.
-Motion uses acceleration ramping (AccelStepper).
+| Command | Args | Requires Homed | Description |
+|---------|------|:-:|---|
+| `PING` | — | No | Heartbeat/keepalive |
+| `STATUS` | — | No | Report position, state, magnet, homed |
+| `HOME` | — | No | Begin 3-phase homing sequence |
+| `HALT` | — | No | Emergency stop all motors + magnet off |
+| `RELAY` | `ON\|OFF` | No | Motor power relay control |
+| `MOVE` | `X<mm> Y<mm> Z<mm>` | Yes | Absolute move to position |
+| `MAG` | `ON\|OFF` | Yes | Electromagnet control |
+| `PICK` | `<sq>` | Yes | Alias for MAG ON |
+| `PLACE` | `<sq>` | Yes | Alias for MAG OFF |
+| `JOG` | `<axis> <steps>` | Yes | Relative jog by step count |
+| `SETSPEED` | `<axis> <steps/s>` | Yes | Set max speed for axis |
 
-**Requires**: Homing completed.
-**Rejects**: If already moving (ACK ERR BUSY_MOVING).
+## Events (Unsolicited)
 
-### MAGNET
-```
-46 MAGNET 1
-→ ACK 46 OK MAGNET_ON
-47 MAGNET 0
-→ ACK 47 OK MAGNET_OFF
-```
-Energize (1) or de-energize (0) the electromagnet.
-
-**Safety**: Magnet is automatically turned OFF on HALT or watchdog timeout.
-
-### HALT
-```
-48 HALT
-→ ACK 48 OK HALTED
-→ EVT HALT CMD_HALT
-```
-Emergency stop. Decelerates all axes, turns magnet OFF.
-Requires RESET + HOME to resume.
-
-### RESET
-```
-49 RESET
-→ ACK 49 OK RESET_NEED_HOME
-```
-Recover from HALT or ERROR state. Requires re-homing before motion.
-
-## Events (Pico → Host)
-
-| Event | Detail | Meaning |
+| Event | Detail | Trigger |
 |-------|--------|---------|
-| `BOOT` | `v2.0 stepper gantry ready` | Firmware started |
-| `POS` | `X<mm> Y<mm> Z<mm> M<0\|1> S<state>` | Position heartbeat (every 500ms) |
-| `HOMING` | `<axis>_START\|<axis>_HIT\|BACKOFF_START` | Homing progress |
-| `HOMED` | `ALL_AXES` | Homing complete |
-| `MOVE_DONE` | `AT X<mm> Y<mm> Z<mm>` | Move completed |
-| `HALT` | `<reason>` | Emergency stop triggered |
-
-## State Machine
-
-```
-BOOT → NEED_HOME → HOMING_Z → HOMING_X → HOMING_Y → HOMING_BACKOFF → IDLE
-IDLE → MOVING → IDLE
-(any) → HALT → (RESET) → NEED_HOME
-(any) → ERROR
-```
+| `EVT:BOOT` | Version string | Power-on |
+| `EVT:HOMING` | Axis + phase | During homing |
+| `EVT:HOMED` | `ALL` | Homing complete |
+| `EVT:HALT` | Reason code | Emergency stop |
+| `EVT:POS` | `X<mm> Y<mm> Z<mm>` | Every 500ms while idle/moving |
+| `EVT:BTN_STOP` | — | Stop button pressed |
+| `EVT:BTN_RESET` | — | Reset button pressed |
+| `EVT:ENDSTOP_X/Y/Z` | — | Endstop hit during move |
 
 ## Error Codes
 
-| Error | Meaning |
-|-------|---------|
-| `PARSE_FAIL` | Command format invalid |
-| `NOT_HOMED` | Motion command before homing |
-| `BUSY_MOVING` | Move command while already moving |
-| `IN_HALT_OR_ERROR` | Command rejected in HALT/ERROR |
-| `MOVE_PARSE_FAIL` | Could not parse X/Y/Z from MOVE |
-| `UNKNOWN_CMD` | Unrecognized command |
+| Code | Meaning |
+|------|---------|
+| `ERR:PARSE` | Command parse failure |
+| `ERR:NOT_HOMED` | Motion command before homing |
+| `ERR:BUSY` | Already moving |
+| `ERR:HALTED` | In HALT or ERROR state |
+| `ERR:AXIS` | Invalid axis letter |
+| `ERR:UNKNOWN` | Unrecognized command |
 
-## Watchdog
+## Homing Sequence
+1. Z axis: fast approach → endstop → backoff 5mm → slow approach (1mm/s) → endstop → zero
+2. X axis: same 3-phase sequence
+3. Y axis: same 3-phase sequence
+4. All axes zeroed, state → IDLE
 
-The firmware has a **2-second watchdog** timer. If no command is received
-within 2 seconds during IDLE or MOVING states, the firmware triggers
-an automatic HALT.
+## Safety
+- **Watchdog**: If no command received for 2s, HALT + relay OFF (kill motor power)
+- **Per-motion timeout**: If move exceeds estimated_time × 1.5 + 3s, HALT
+- **Endstop during move**: Immediate HALT
+- **HALT state**: Magnet forced OFF. Use HOME or button RESET to recover.
+- **Motion refused before homing**: All MOVE/JOG/MAG/PICK/PLACE require homed=true
 
-**The host must send PING or STATUS at least every 1.5 seconds as a keepalive.**
-
-## Timing
-
-| Operation | Typical Duration |
-|-----------|-----------------|
-| Homing (all axes) | 15–30 seconds |
-| XY move (150mm) | ~2 seconds |
-| Z move (40mm) | ~1.5 seconds |
-| Magnet toggle | <1ms |
-| HALT response | <100ms (deceleration) |
-
-## Hardware Notes
-
-- **Endstops**: NC (normally closed), active-low with internal pullup.
-  Triggered (switch opens) = pin reads LOW.
-- **Electromagnet**: IRLZ44N MOSFET (logic-level gate).
-  1N4007 flyback diode across coil (cathode to +V, anode to MOSFET drain).
-- **Microstepping**: Default 1/16 (A4988: MS1=HIGH, MS2=HIGH, MS3=LOW).
-- **Steps/mm**: 80 microsteps/mm (3200 µsteps/rev ÷ 40mm/rev from 20T GT2 pulley).
+## Example Session
+```
+→ 1 PING
+← OK 1 PONG
+→ 2 HOME
+← OK 2 HOMING
+← EVT:HOMING Z_FAST
+← EVT:HOMING Z_BACKOFF
+← EVT:HOMING Z_SLOW
+← EVT:HOMING X_FAST
+...
+← EVT:HOMED ALL
+→ 3 MOVE X100.0 Y50.0 Z10.0
+← OK 3 TO X100.0 Y50.0 Z10.0
+← EVT:POS X52.30 Y25.10 Z5.20
+← DONE 3 AT X100.00 Y50.00 Z10.00
+→ 4 MAG ON
+← OK 4 MAG_ON
+→ 5 STATUS
+← OK 5 x=100.00 y=50.00 z=10.00 state=IDLE mag=1 homed=1
+```

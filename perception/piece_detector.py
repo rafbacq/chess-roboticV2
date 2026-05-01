@@ -71,11 +71,27 @@ class PieceDetector:
         occupancy_threshold: float = 30.0,
         color_threshold: float = 50.0,
         square_margin_frac: float = 0.15,
+        classifier_model_path: str = "",
     ) -> None:
         self._occupancy_threshold = occupancy_threshold
         self._color_threshold = color_threshold
         self._margin_frac = square_margin_frac
         self._empty_baselines: dict[str, np.ndarray] = {}
+        self._classifier = None
+
+        # Load ML classifier if model path is provided
+        if classifier_model_path:
+            try:
+                from perception.piece_classifier import PieceClassifier, ClassifierConfig
+                config = ClassifierConfig(model_path=classifier_model_path)
+                self._classifier = PieceClassifier(config)
+                if self._classifier.load_model():
+                    logger.info(f"Loaded piece classifier: {classifier_model_path}")
+                else:
+                    self._classifier = None
+                    logger.warning("Failed to load piece classifier, using classical only")
+            except ImportError:
+                logger.warning("torch not available, using classical detection only")
 
     def calibrate_empty_board(self, warped_image: np.ndarray) -> None:
         """
@@ -137,18 +153,43 @@ class PieceDetector:
             is_occupied = diff > self._color_threshold
             confidence = min(diff / (self._color_threshold * 3), 1.0)
 
-        # Try to determine piece color
+        # Try to determine piece color using classical heuristics
         piece_color = None
+        piece_type = None
         if is_occupied:
             gray_val = np.mean(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY))
             # Rough heuristic: lighter pieces = white, darker = black
             piece_color = PieceColor.WHITE if gray_val > 128 else PieceColor.BLACK
+
+        # Enhance with ML classifier when available
+        if self._classifier is not None:
+            from perception.piece_classifier import PieceClass
+            pred_class, ml_conf = self._classifier.classify(roi)
+            if ml_conf > 0.5:  # Only trust high-confidence predictions
+                if pred_class == PieceClass.EMPTY:
+                    is_occupied = False
+                    confidence = ml_conf
+                    piece_color = None
+                    piece_type = None
+                else:
+                    is_occupied = True
+                    confidence = ml_conf
+                    # Map PieceClass to PieceColor + PieceType
+                    _type_map = {
+                        1: PieceType.PAWN, 2: PieceType.KNIGHT, 3: PieceType.BISHOP,
+                        4: PieceType.ROOK, 5: PieceType.QUEEN, 6: PieceType.KING,
+                        7: PieceType.PAWN, 8: PieceType.KNIGHT, 9: PieceType.BISHOP,
+                        10: PieceType.ROOK, 11: PieceType.QUEEN, 12: PieceType.KING,
+                    }
+                    piece_color = PieceColor.WHITE if pred_class.value <= 6 else PieceColor.BLACK
+                    piece_type = _type_map.get(pred_class.value)
 
         return SquareAnalysis(
             square_name=sq_name,
             is_occupied=is_occupied,
             confidence=confidence,
             piece_color=piece_color,
+            piece_type=piece_type,
             roi=roi,
         )
 

@@ -33,6 +33,7 @@ from robot_model.arm_interface import (
     SimulatedGripper,
 )
 from robot_model.xarm6_driver import XArm6Arm, XArmGripper
+from robot_model.gantry_driver import GantryArm, GantryGripper
 from motion_planning.moveit2_planner import MoveIt2Planner
 
 logger = logging.getLogger(__name__)
@@ -41,10 +42,12 @@ logger = logging.getLogger(__name__)
 _ARM_DRIVERS: dict[str, type] = {
     "simulated": SimulatedArm,
     "xarm6": XArm6Arm,
+    "gantry": GantryArm,
 }
 _GRIPPER_DRIVERS: dict[str, type] = {
     "simulated": SimulatedGripper,
     "xarm_gripper": XArmGripper,
+    "electromagnet": GantryGripper,
 }
 
 

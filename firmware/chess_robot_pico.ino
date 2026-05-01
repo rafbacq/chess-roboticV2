@@ -1,639 +1,488 @@
 /*
- * Chess Gantry Robot — Raspberry Pi Pico Firmware
- * ================================================
+ * Chess Gantry Robot — Raspberry Pi Pico (RP2040) Firmware v2.1
+ * =============================================================
  *
- * Stepper-based XYZ gantry with electromagnet end-effector.
+ * HARDWARE SAFETY:
+ *   Electromagnet MUST use IRLZ44N N-MOSFET with:
+ *     - 220Ω gate resistor (GPIO → gate)
+ *     - 10kΩ pulldown (gate → source, ensures default OFF)
+ *     - 1N4007 flyback diode across coil (cathode to +V, anode to drain)
+ *   NEVER drive coil directly from GPIO. Omitting flyback diode WILL
+ *   destroy the MOSFET from back-EMF.
  *
- * Hardware:
- *   - 3× NEMA17 steppers via A4988/DRV8825 drivers (STEP/DIR)
- *   - 3× Mechanical endstops (NC, active-low with internal pullup)
- *   - 1× Electromagnet via IRLZ44N MOSFET + 1N4007 flyback diode
- *   - 1× Spare driver channel (disabled, for future captured-piece bin)
- *   - Serial over USB (115200 baud, structured protocol)
+ * Pin Map (RP2040 — GP0/GP1 reserved for USB, no UART0 conflict):
+ *   X Stepper: STEP=GP2, DIR=GP3, ENABLE=GP4
+ *   Y Stepper: STEP=GP5, DIR=GP6, ENABLE=GP7
+ *   Z Stepper: STEP=GP8, DIR=GP9, ENABLE=GP12
+ *   Magnet MOSFET gate: GP10 (active HIGH)
+ *   Relay (motor power kill): GP11 (active HIGH = power ON)
+ *   MS1/MS2/MS3: GP13/GP14/GP15 (A4988: H/H/L = 1/16 µstep)
+ *   Buttons: STOP=GP21, RESET=GP22
+ *   Endstops: X=GP26, Y=GP27, Z=GP28 (NC, active LOW with pullup)
+ *   LED: GP25 (onboard)
  *
- * Pin Map (RP2040, no UART0 conflict on GP0/GP1):
- *   X Stepper: STEP=GP2, DIR=GP3
- *   Y Stepper: STEP=GP4, DIR=GP5
- *   Z Stepper: STEP=GP6, DIR=GP7
- *   Spare:     STEP=GP8, DIR=GP9 (disabled)
+ * Camera connects to HOST, NOT Pico. Buck converter has no data pin.
  *
- *   X Endstop: GP10 (NC, pulled high — LOW when triggered)
- *   Y Endstop: GP11
- *   Z Endstop: GP12
- *
- *   Electromagnet: GP13 (MOSFET gate, active-high)
- *   LED Status:    GP25 (onboard LED)
- *
- *   Microstepping select (optional, directly wired to MS1/MS2/MS3):
- *     A4988: MS1=GP14, MS2=GP15, MS3=GP16 (for X axis; Y/Z wired similarly or hardwired)
- *     Default: 1/16 microstepping (MS1=HIGH, MS2=HIGH, MS3=LOW for A4988)
- *
- * Safety:
- *   - Watchdog: 2-second timeout, auto-reset on command receipt
- *   - Endstop polling at every step (hard stop on trigger during motion)
- *   - Electromagnet auto-off on HALT or watchdog reset
- *   - Homing required before any motion command accepted
- *   - Per-axis max travel limits enforced in software
- *
- * Protocol: See PROTOCOL.md
- *
- * Dependencies:
- *   - AccelStepper library (via PlatformIO / Arduino Library Manager)
- *   - Arduino-Pico core (Earle Philhower)
+ * Dependencies: AccelStepper (PlatformIO / Arduino Library Manager)
+ * Board core: arduino-pico (Earle Philhower)
  */
 
 #include <AccelStepper.h>
 
-// ============================================================
-// Pin Definitions — CRITICAL: GP0/GP1 reserved for USB serial
-// ============================================================
-#define X_STEP_PIN    2
-#define X_DIR_PIN     3
-#define Y_STEP_PIN    4
-#define Y_DIR_PIN     5
-#define Z_STEP_PIN    6
-#define Z_DIR_PIN     7
-#define SPARE_STEP    8   // Disabled, future use
-#define SPARE_DIR     9
+// ===================== PIN DEFINITIONS =====================
+#define X_STEP  2
+#define X_DIR   3
+#define X_EN    4
+#define Y_STEP  5
+#define Y_DIR   6
+#define Y_EN    7
+#define Z_STEP  8
+#define Z_DIR   9
+#define Z_EN    12
 
-#define X_ENDSTOP_PIN 10  // NC endstop, active LOW
-#define Y_ENDSTOP_PIN 11
-#define Z_ENDSTOP_PIN 12
+#define MAG_PIN    10   // IRLZ44N gate
+#define RELAY_PIN  11   // Motor power relay
+#define MS1_PIN    13
+#define MS2_PIN    14
+#define MS3_PIN    15
 
-#define MAGNET_PIN    13  // IRLZ44N gate — HIGH = energized
-#define LED_PIN       25  // Onboard LED
+#define BTN_STOP   21
+#define BTN_RESET  22
+#define LED_PIN    25
 
-// Microstepping select (optional, can be hardwired)
-#define MS1_PIN       14
-#define MS2_PIN       15
-#define MS3_PIN       16
+#define X_END  26   // NC endstop, pulled HIGH, LOW = triggered
+#define Y_END  27
+#define Z_END  28
 
-// ============================================================
-// Motion Parameters
-// ============================================================
-// NEMA17 1.8° = 200 full steps/rev
-// With 1/16 microstepping = 3200 microsteps/rev
-// GT2 belt 20T pulley = 40mm/rev
-// → 3200 / 40mm = 80 microsteps/mm
-#define STEPS_PER_MM_XY     80.0f
-#define STEPS_PER_MM_Z      80.0f   // Adjust for Z lead screw if different
+// ===================== MOTION PARAMS =====================
+// NEMA17 1.8° = 200 steps/rev, 1/16 µstep = 3200/rev
+// GT2 20T pulley = 40mm/rev → 80 µsteps/mm
+#define STEPS_MM_XY  80.0f
+#define STEPS_MM_Z   80.0f
 
-// Travel limits (mm) — measured from home (0,0,0)
-#define X_MAX_MM            300.0f  // ~12" board + margins
-#define Y_MAX_MM            300.0f
-#define Z_MAX_MM             60.0f  // Z only needs ~40mm travel
+#define X_MAX_MM  300.0f
+#define Y_MAX_MM  300.0f
+#define Z_MAX_MM   60.0f
 
-// Speed / acceleration
-#define XY_MAX_SPEED_MMPS   100.0f  // mm/sec
-#define Z_MAX_SPEED_MMPS     30.0f
-#define XY_ACCEL_MMPS2      200.0f  // mm/sec²
-#define Z_ACCEL_MMPS2       100.0f
+#define XY_SPEED   100.0f  // mm/s
+#define Z_SPEED     30.0f
+#define XY_ACCEL   200.0f  // mm/s²
+#define Z_ACCEL    100.0f
 
-// Homing
-#define HOMING_SPEED_MMPS    20.0f  // Slow approach
-#define HOMING_BACKOFF_MM     3.0f  // Back off after trigger
+#define HOME_FAST    20.0f  // mm/s first pass
+#define HOME_SLOW     1.0f  // mm/s re-approach
+#define HOME_BACKOFF  5.0f  // mm backoff
 
-// Watchdog
-#define WATCHDOG_TIMEOUT_MS  2000   // 2 seconds
+#define WDT_MS     2000
+#define MOTION_WDT_MULT 1.5f
 
-// ============================================================
-// State Machine
-// ============================================================
-enum SystemState {
-    STATE_BOOT,          // Initial startup
-    STATE_NEED_HOME,     // Homing required before motion
-    STATE_HOMING_X,      // Homing X axis
-    STATE_HOMING_Y,
-    STATE_HOMING_Z,
-    STATE_HOMING_BACKOFF,
-    STATE_IDLE,          // Ready for commands
-    STATE_MOVING,        // Executing a move
-    STATE_HALT,          // Emergency stop
-    STATE_ERROR          // Unrecoverable error
+// ===================== STATE MACHINE =====================
+enum State {
+    S_BOOT, S_NEED_HOME,
+    S_HOME_Z1, S_HOME_Z_BACK, S_HOME_Z2,
+    S_HOME_X1, S_HOME_X_BACK, S_HOME_X2,
+    S_HOME_Y1, S_HOME_Y_BACK, S_HOME_Y2,
+    S_HOME_FINAL,
+    S_IDLE, S_MOVING, S_HALT, S_ERROR
 };
 
-// ============================================================
-// Globals
-// ============================================================
-AccelStepper stepperX(AccelStepper::DRIVER, X_STEP_PIN, X_DIR_PIN);
-AccelStepper stepperY(AccelStepper::DRIVER, Y_STEP_PIN, Y_DIR_PIN);
-AccelStepper stepperZ(AccelStepper::DRIVER, Z_STEP_PIN, Z_DIR_PIN);
+// ===================== GLOBALS =====================
+AccelStepper sX(AccelStepper::DRIVER, X_STEP, X_DIR);
+AccelStepper sY(AccelStepper::DRIVER, Y_STEP, Y_DIR);
+AccelStepper sZ(AccelStepper::DRIVER, Z_STEP, Z_DIR);
 
-SystemState state = STATE_BOOT;
-SystemState homingNextAxis = STATE_IDLE;
+State state = S_BOOT;
+bool magOn = false, relayOn = false, homed = false;
+unsigned long lastCmdMs = 0, lastHbMs = 0;
+unsigned long moveStartMs = 0, moveTimeoutMs = 0;
+uint16_t moveSeq = 0;
 
-unsigned long lastCommandMs = 0;
-unsigned long lastHeartbeatMs = 0;
-bool magnetOn = false;
-bool homed = false;
+#define BUF 128
+char buf[BUF];
+int bi = 0;
+bool btnStopPrev = false, btnResetPrev = false;
 
-// Current position tracking (in mm)
-float posX_mm = 0.0f;
-float posY_mm = 0.0f;
-float posZ_mm = 0.0f;
+// ===================== FORWARD DECLS =====================
+void processCmd(const char* c);
+void ack(uint16_t s, const char* st, const char* d = "");
+void evt(const char* e, const char* d = "");
+void halt(const char* r);
+void setMag(bool on);
+void setRelay(bool on);
+bool endstop(int pin);
+void enableMotors(bool en);
+void startHome();
 
-// Command parsing
-#define CMD_BUF_SIZE 128
-char cmdBuffer[CMD_BUF_SIZE];
-int cmdIndex = 0;
-uint16_t cmdSeq = 0;  // Command sequence number for ack
-
-// Move target (for non-blocking move tracking)
-long targetStepsX = 0;
-long targetStepsY = 0;
-long targetStepsZ = 0;
-uint16_t moveSeq = 0;  // Sequence of current move
-
-// ============================================================
-// Forward declarations
-// ============================================================
-void processCommand(const char* cmd);
-void sendAck(uint16_t seq, const char* status, const char* detail = "");
-void sendEvent(const char* event, const char* detail = "");
-void haltAll(const char* reason);
-void setMagnet(bool on);
-bool isEndstopTriggered(int pin);
-void configMicrostepping();
-void startHoming();
-void handleHoming();
-void handleMoving();
-
-// ============================================================
-// Setup
-// ============================================================
+// ===================== SETUP =====================
 void setup() {
     Serial.begin(115200);
-    while (!Serial && millis() < 3000) {
-        // Wait up to 3s for USB serial
-    }
+    while (!Serial && millis() < 3000);
 
-    // LED
     pinMode(LED_PIN, OUTPUT);
-    digitalWrite(LED_PIN, HIGH);
+    pinMode(MAG_PIN, OUTPUT); digitalWrite(MAG_PIN, LOW);
+    pinMode(RELAY_PIN, OUTPUT); digitalWrite(RELAY_PIN, HIGH); relayOn = true;
+    pinMode(X_EN, OUTPUT); pinMode(Y_EN, OUTPUT); pinMode(Z_EN, OUTPUT);
+    enableMotors(true);
 
-    // Endstops — INPUT_PULLUP for NC switches
-    pinMode(X_ENDSTOP_PIN, INPUT_PULLUP);
-    pinMode(Y_ENDSTOP_PIN, INPUT_PULLUP);
-    pinMode(Z_ENDSTOP_PIN, INPUT_PULLUP);
+    pinMode(X_END, INPUT_PULLUP);
+    pinMode(Y_END, INPUT_PULLUP);
+    pinMode(Z_END, INPUT_PULLUP);
+    pinMode(BTN_STOP, INPUT_PULLUP);
+    pinMode(BTN_RESET, INPUT_PULLUP);
 
-    // Magnet — start OFF
-    pinMode(MAGNET_PIN, OUTPUT);
-    digitalWrite(MAGNET_PIN, LOW);
+    // A4988 1/16: MS1=H MS2=H MS3=L
+    pinMode(MS1_PIN, OUTPUT); digitalWrite(MS1_PIN, HIGH);
+    pinMode(MS2_PIN, OUTPUT); digitalWrite(MS2_PIN, HIGH);
+    pinMode(MS3_PIN, OUTPUT); digitalWrite(MS3_PIN, LOW);
 
-    // Microstepping select
-    configMicrostepping();
+    sX.setMaxSpeed(XY_SPEED * STEPS_MM_XY);
+    sX.setAcceleration(XY_ACCEL * STEPS_MM_XY);
+    sY.setMaxSpeed(XY_SPEED * STEPS_MM_XY);
+    sY.setAcceleration(XY_ACCEL * STEPS_MM_XY);
+    sZ.setMaxSpeed(Z_SPEED * STEPS_MM_Z);
+    sZ.setAcceleration(Z_ACCEL * STEPS_MM_Z);
 
-    // Configure steppers (values in steps, not mm)
-    stepperX.setMaxSpeed(XY_MAX_SPEED_MMPS * STEPS_PER_MM_XY);
-    stepperX.setAcceleration(XY_ACCEL_MMPS2 * STEPS_PER_MM_XY);
-
-    stepperY.setMaxSpeed(XY_MAX_SPEED_MMPS * STEPS_PER_MM_XY);
-    stepperY.setAcceleration(XY_ACCEL_MMPS2 * STEPS_PER_MM_XY);
-
-    stepperZ.setMaxSpeed(Z_MAX_SPEED_MMPS * STEPS_PER_MM_Z);
-    stepperZ.setAcceleration(Z_ACCEL_MMPS2 * STEPS_PER_MM_Z);
-
-    state = STATE_NEED_HOME;
-    lastCommandMs = millis();
-
-    sendEvent("BOOT", "v2.0 stepper gantry ready");
+    state = S_NEED_HOME;
+    lastCmdMs = millis();
+    evt("BOOT", "v2.1 stepper gantry");
 }
 
-// ============================================================
-// Main Loop — fully non-blocking
-// ============================================================
+// ===================== MAIN LOOP =====================
 void loop() {
     unsigned long now = millis();
 
-    // --- Read serial commands (non-blocking) ---
+    // Serial input (non-blocking)
     while (Serial.available()) {
         char c = Serial.read();
         if (c == '\n' || c == '\r') {
-            if (cmdIndex > 0) {
-                cmdBuffer[cmdIndex] = '\0';
-                processCommand(cmdBuffer);
-                cmdIndex = 0;
-                lastCommandMs = now;  // Reset watchdog
-            }
-        } else if (cmdIndex < CMD_BUF_SIZE - 1) {
-            cmdBuffer[cmdIndex++] = c;
-        }
+            if (bi > 0) { buf[bi] = 0; processCmd(buf); bi = 0; lastCmdMs = now; }
+        } else if (bi < BUF - 1) buf[bi++] = c;
     }
 
-    // --- Watchdog ---
-    if (state == STATE_IDLE || state == STATE_MOVING) {
-        if ((now - lastCommandMs) > WATCHDOG_TIMEOUT_MS) {
-            haltAll("WATCHDOG_TIMEOUT");
-        }
+    // Buttons (debounced edge detection)
+    bool stop = !digitalRead(BTN_STOP);
+    bool reset = !digitalRead(BTN_RESET);
+    if (stop && !btnStopPrev) { halt("BTN_STOP"); evt("BTN_STOP"); }
+    if (reset && !btnResetPrev && (state == S_HALT || state == S_ERROR)) {
+        setMag(false); homed = false; state = S_NEED_HOME;
+        enableMotors(true); setRelay(true);
+        evt("BTN_RESET");
+    }
+    btnStopPrev = stop; btnResetPrev = reset;
+
+    // Watchdog
+    if ((state == S_IDLE || state == S_MOVING) && (now - lastCmdMs) > WDT_MS) {
+        halt("WDT_TIMEOUT");
+        setRelay(false);
     }
 
-    // --- State machine tick ---
+    // Per-motion watchdog
+    if (state == S_MOVING && moveTimeoutMs > 0 && (now - moveStartMs) > moveTimeoutMs) {
+        halt("MOTION_TIMEOUT");
+    }
+
+    // State machine
     switch (state) {
-        case STATE_BOOT:
-        case STATE_NEED_HOME:
-            // Blink LED slowly to indicate need-home
-            digitalWrite(LED_PIN, (now / 500) % 2);
-            break;
-
-        case STATE_HOMING_X:
-        case STATE_HOMING_Y:
-        case STATE_HOMING_Z:
-        case STATE_HOMING_BACKOFF:
-            handleHoming();
-            break;
-
-        case STATE_IDLE:
-            // Solid LED
-            digitalWrite(LED_PIN, HIGH);
-            break;
-
-        case STATE_MOVING:
-            handleMoving();
-            break;
-
-        case STATE_HALT:
-            // Fast blink
-            digitalWrite(LED_PIN, (now / 100) % 2);
-            setMagnet(false);  // Safety: magnet off on halt
-            break;
-
-        case STATE_ERROR:
-            // Very fast blink
-            digitalWrite(LED_PIN, (now / 50) % 2);
-            setMagnet(false);
-            break;
+        case S_BOOT: case S_NEED_HOME:
+            digitalWrite(LED_PIN, (now / 500) % 2); break;
+        case S_HOME_Z1: case S_HOME_Z_BACK: case S_HOME_Z2:
+        case S_HOME_X1: case S_HOME_X_BACK: case S_HOME_X2:
+        case S_HOME_Y1: case S_HOME_Y_BACK: case S_HOME_Y2:
+        case S_HOME_FINAL:
+            handleHome(); break;
+        case S_IDLE:
+            digitalWrite(LED_PIN, HIGH); break;
+        case S_MOVING:
+            handleMove(); break;
+        case S_HALT:
+            digitalWrite(LED_PIN, (now / 100) % 2); setMag(false); break;
+        case S_ERROR:
+            digitalWrite(LED_PIN, (now / 50) % 2); setMag(false); break;
     }
 
-    // --- Run steppers (non-blocking) ---
-    stepperX.run();
-    stepperY.run();
-    stepperZ.run();
+    sX.run(); sY.run(); sZ.run();
 
-    // --- Heartbeat every 500ms ---
-    if ((now - lastHeartbeatMs) > 500) {
-        lastHeartbeatMs = now;
-        // Only send heartbeat in IDLE or MOVING
-        if (state == STATE_IDLE || state == STATE_MOVING) {
-            char buf[80];
-            snprintf(buf, sizeof(buf), "X%.2f Y%.2f Z%.2f M%d S%d",
-                     stepperX.currentPosition() / STEPS_PER_MM_XY,
-                     stepperY.currentPosition() / STEPS_PER_MM_XY,
-                     stepperZ.currentPosition() / STEPS_PER_MM_Z,
-                     magnetOn ? 1 : 0,
-                     (int)state);
-            sendEvent("POS", buf);
-        }
+    // Position heartbeat every 500ms
+    if (state >= S_IDLE && state <= S_MOVING && (now - lastHbMs) > 500) {
+        lastHbMs = now;
+        char d[80];
+        snprintf(d, sizeof(d), "X%.2f Y%.2f Z%.2f",
+            sX.currentPosition() / STEPS_MM_XY,
+            sY.currentPosition() / STEPS_MM_XY,
+            sZ.currentPosition() / STEPS_MM_Z);
+        evt("POS", d);
+    }
+
+    // Endstop safety during non-homing motion
+    if (state == S_MOVING) {
+        if (endstop(X_END)) { halt("ENDSTOP_X"); evt("EVT:ENDSTOP_X"); return; }
+        if (endstop(Y_END)) { halt("ENDSTOP_Y"); evt("EVT:ENDSTOP_Y"); return; }
+        if (endstop(Z_END)) { halt("ENDSTOP_Z"); evt("EVT:ENDSTOP_Z"); return; }
     }
 }
 
-// ============================================================
-// Command Processing
-// ============================================================
-void processCommand(const char* cmd) {
-    // Protocol: SEQ CMD [ARGS...]
-    // Example: "42 MOVE X100.0 Y200.0 Z10.0"
-    // Example: "43 HOME"
-    // Example: "44 MAGNET 1"
-    // Example: "45 HALT"
-    // Example: "46 PING"
-    // Example: "47 STATUS"
-    // Example: "48 RESET"
+// ===================== HOMING (3-phase per axis: fast→backoff→slow) =====================
+void startHome() {
+    setMag(false); homed = false; enableMotors(true); setRelay(true);
+    state = S_HOME_Z1;
+    sZ.setMaxSpeed(HOME_FAST * STEPS_MM_Z);
+    sZ.moveTo(-999999);
+    evt("HOMING", "Z_FAST");
+}
 
+void handleHome() {
+    switch (state) {
+        case S_HOME_Z1:
+            if (endstop(Z_END)) {
+                sZ.stop(); sZ.setCurrentPosition(0);
+                sZ.moveTo((long)(HOME_BACKOFF * STEPS_MM_Z));
+                state = S_HOME_Z_BACK; evt("HOMING", "Z_BACKOFF");
+            } break;
+        case S_HOME_Z_BACK:
+            if (!sZ.isRunning()) {
+                sZ.setMaxSpeed(HOME_SLOW * STEPS_MM_Z);
+                sZ.moveTo(-999999);
+                state = S_HOME_Z2; evt("HOMING", "Z_SLOW");
+            } break;
+        case S_HOME_Z2:
+            if (endstop(Z_END)) {
+                sZ.stop(); sZ.setCurrentPosition(0);
+                sZ.setMaxSpeed(Z_SPEED * STEPS_MM_Z);
+                // Start X
+                sX.setMaxSpeed(HOME_FAST * STEPS_MM_XY);
+                sX.moveTo(-999999);
+                state = S_HOME_X1; evt("HOMING", "X_FAST");
+            } break;
+        case S_HOME_X1:
+            if (endstop(X_END)) {
+                sX.stop(); sX.setCurrentPosition(0);
+                sX.moveTo((long)(HOME_BACKOFF * STEPS_MM_XY));
+                state = S_HOME_X_BACK; evt("HOMING", "X_BACKOFF");
+            } break;
+        case S_HOME_X_BACK:
+            if (!sX.isRunning()) {
+                sX.setMaxSpeed(HOME_SLOW * STEPS_MM_XY);
+                sX.moveTo(-999999);
+                state = S_HOME_X2; evt("HOMING", "X_SLOW");
+            } break;
+        case S_HOME_X2:
+            if (endstop(X_END)) {
+                sX.stop(); sX.setCurrentPosition(0);
+                sX.setMaxSpeed(XY_SPEED * STEPS_MM_XY);
+                sY.setMaxSpeed(HOME_FAST * STEPS_MM_XY);
+                sY.moveTo(-999999);
+                state = S_HOME_Y1; evt("HOMING", "Y_FAST");
+            } break;
+        case S_HOME_Y1:
+            if (endstop(Y_END)) {
+                sY.stop(); sY.setCurrentPosition(0);
+                sY.moveTo((long)(HOME_BACKOFF * STEPS_MM_XY));
+                state = S_HOME_Y_BACK; evt("HOMING", "Y_BACKOFF");
+            } break;
+        case S_HOME_Y_BACK:
+            if (!sY.isRunning()) {
+                sY.setMaxSpeed(HOME_SLOW * STEPS_MM_XY);
+                sY.moveTo(-999999);
+                state = S_HOME_Y2; evt("HOMING", "Y_SLOW");
+            } break;
+        case S_HOME_Y2:
+            if (endstop(Y_END)) {
+                sY.stop(); sY.setCurrentPosition(0);
+                sY.setMaxSpeed(XY_SPEED * STEPS_MM_XY);
+                state = S_HOME_FINAL;
+            } break;
+        case S_HOME_FINAL:
+            if (!sX.isRunning() && !sY.isRunning() && !sZ.isRunning()) {
+                homed = true; state = S_IDLE; evt("HOMED", "ALL");
+            } break;
+        default: break;
+    }
+}
+
+// ===================== MOVE HANDLING =====================
+void handleMove() {
+    if (!sX.isRunning() && !sY.isRunning() && !sZ.isRunning()) {
+        state = S_IDLE;
+        char d[64];
+        snprintf(d, sizeof(d), "AT X%.2f Y%.2f Z%.2f",
+            sX.currentPosition() / STEPS_MM_XY,
+            sY.currentPosition() / STEPS_MM_XY,
+            sZ.currentPosition() / STEPS_MM_Z);
+        ack(moveSeq, "DONE", d);
+    }
+}
+
+// ===================== COMMAND PROCESSING =====================
+void processCmd(const char* cmd) {
     uint16_t seq = 0;
-    char cmdType[16] = {0};
-    int parsed = sscanf(cmd, "%hu %15s", &seq, cmdType);
+    char ct[16] = {0};
+    if (sscanf(cmd, "%hu %15s", &seq, ct) < 2) { ack(0, "ERR:PARSE"); return; }
 
-    if (parsed < 2) {
-        sendAck(0, "ERR", "PARSE_FAIL");
-        return;
+    // Always-available commands
+    if (!strcmp(ct, "PING"))   { ack(seq, "OK", "PONG"); return; }
+    if (!strcmp(ct, "HALT"))   { halt("CMD"); ack(seq, "OK", "HALTED"); return; }
+    if (!strcmp(ct, "STATUS")) {
+        char d[96];
+        const char* sn[] = {"BOOT","NEED_HOME","HOME_Z1","HOME_ZB","HOME_Z2",
+            "HOME_X1","HOME_XB","HOME_X2","HOME_Y1","HOME_YB","HOME_Y2",
+            "HOME_F","IDLE","MOVING","HALT","ERROR"};
+        snprintf(d, sizeof(d), "x=%.2f y=%.2f z=%.2f state=%s mag=%d homed=%d",
+            sX.currentPosition() / STEPS_MM_XY,
+            sY.currentPosition() / STEPS_MM_XY,
+            sZ.currentPosition() / STEPS_MM_Z,
+            sn[state], magOn ? 1 : 0, homed ? 1 : 0);
+        ack(seq, "OK", d); return;
+    }
+    if (!strcmp(ct, "HOME")) {
+        if (state == S_MOVING) { ack(seq, "ERR:BUSY"); return; }
+        startHome(); ack(seq, "OK", "HOMING"); return;
+    }
+    if (!strcmp(ct, "RELAY")) {
+        const char* p = cmd; skipTo(&p, 2);
+        if (!strncmp(p, "ON", 2)) setRelay(true);
+        else if (!strncmp(p, "OFF", 3)) setRelay(false);
+        ack(seq, "OK", relayOn ? "RELAY_ON" : "RELAY_OFF"); return;
     }
 
-    // --- PING: always respond ---
-    if (strcmp(cmdType, "PING") == 0) {
-        sendAck(seq, "OK", "PONG");
-        return;
-    }
+    // Homed-only commands
+    if (!homed) { ack(seq, "ERR:NOT_HOMED"); return; }
+    if (state == S_HALT || state == S_ERROR) { ack(seq, "ERR:HALTED"); return; }
 
-    // --- STATUS: report current state ---
-    if (strcmp(cmdType, "STATUS") == 0) {
-        char detail[80];
-        snprintf(detail, sizeof(detail), "STATE=%d HOMED=%d X=%.2f Y=%.2f Z=%.2f MAG=%d",
-                 (int)state, homed ? 1 : 0,
-                 stepperX.currentPosition() / STEPS_PER_MM_XY,
-                 stepperY.currentPosition() / STEPS_PER_MM_XY,
-                 stepperZ.currentPosition() / STEPS_PER_MM_Z,
-                 magnetOn ? 1 : 0);
-        sendAck(seq, "OK", detail);
-        return;
-    }
-
-    // --- HALT: emergency stop from any state ---
-    if (strcmp(cmdType, "HALT") == 0) {
-        haltAll("CMD_HALT");
-        sendAck(seq, "OK", "HALTED");
-        return;
-    }
-
-    // --- RESET: recover from HALT/ERROR, require re-homing ---
-    if (strcmp(cmdType, "RESET") == 0) {
-        setMagnet(false);
-        stepperX.stop();
-        stepperY.stop();
-        stepperZ.stop();
-        homed = false;
-        state = STATE_NEED_HOME;
-        sendAck(seq, "OK", "RESET_NEED_HOME");
-        return;
-    }
-
-    // --- HOME: begin homing sequence ---
-    if (strcmp(cmdType, "HOME") == 0) {
-        if (state == STATE_MOVING) {
-            sendAck(seq, "ERR", "BUSY_MOVING");
-            return;
-        }
-        startHoming();
-        sendAck(seq, "OK", "HOMING_STARTED");
-        return;
-    }
-
-    // --- Commands below require homed state ---
-    if (!homed) {
-        sendAck(seq, "ERR", "NOT_HOMED");
-        return;
-    }
-
-    if (state == STATE_HALT || state == STATE_ERROR) {
-        sendAck(seq, "ERR", "IN_HALT_OR_ERROR");
-        return;
-    }
-
-    // --- MOVE X<mm> Y<mm> Z<mm>: absolute move ---
-    if (strcmp(cmdType, "MOVE") == 0) {
-        if (state == STATE_MOVING) {
-            sendAck(seq, "ERR", "BUSY_MOVING");
-            return;
-        }
-
+    if (!strcmp(ct, "MOVE")) {
+        if (state == S_MOVING) { ack(seq, "ERR:BUSY"); return; }
         float mx = -1, my = -1, mz = -1;
-        const char* p = cmd;
-        // Skip seq and MOVE
-        while (*p && *p != ' ') p++; // skip seq
+        const char* p = cmd; skipTo(&p, 2);
+        parseXYZ(p, &mx, &my, &mz);
+        if (mx < 0 || my < 0 || mz < 0) { ack(seq, "ERR:PARSE"); return; }
+        mx = constrain(mx, 0, X_MAX_MM);
+        my = constrain(my, 0, Y_MAX_MM);
+        mz = constrain(mz, 0, Z_MAX_MM);
+        startMove(mx, my, mz, seq);
+        return;
+    }
+
+    if (!strcmp(ct, "PICK")) {
+        // PICK <sq> — move to square, lower Z, magnet on, lift
+        // Simplified: host handles sequencing; PICK just enables magnet
+        if (state == S_MOVING) { ack(seq, "ERR:BUSY"); return; }
+        setMag(true);
+        ack(seq, "OK", "MAG_ON"); return;
+    }
+
+    if (!strcmp(ct, "PLACE")) {
+        if (state == S_MOVING) { ack(seq, "ERR:BUSY"); return; }
+        setMag(false);
+        ack(seq, "OK", "MAG_OFF"); return;
+    }
+
+    if (!strcmp(ct, "MAG")) {
+        const char* p = cmd; skipTo(&p, 2);
+        if (!strncmp(p, "ON", 2)) setMag(true);
+        else if (!strncmp(p, "OFF", 3)) setMag(false);
+        ack(seq, "OK", magOn ? "MAG_ON" : "MAG_OFF"); return;
+    }
+
+    if (!strcmp(ct, "JOG")) {
+        if (state == S_MOVING) { ack(seq, "ERR:BUSY"); return; }
+        char axis = 0; long steps = 0;
+        const char* p = cmd; skipTo(&p, 2);
+        sscanf(p, "%c %ld", &axis, &steps);
+        AccelStepper* s = nullptr;
+        if (axis == 'X' || axis == 'x') s = &sX;
+        else if (axis == 'Y' || axis == 'y') s = &sY;
+        else if (axis == 'Z' || axis == 'z') s = &sZ;
+        if (!s) { ack(seq, "ERR:AXIS"); return; }
+        s->move(steps);
+        moveSeq = seq; state = S_MOVING;
+        moveStartMs = millis();
+        moveTimeoutMs = (unsigned long)(abs(steps) / (XY_SPEED * STEPS_MM_XY) * 1000 * MOTION_WDT_MULT) + 2000;
+        ack(seq, "OK", "JOGGING"); return;
+    }
+
+    if (!strcmp(ct, "SETSPEED")) {
+        char axis = 0; float spd = 0;
+        const char* p = cmd; skipTo(&p, 2);
+        sscanf(p, "%c %f", &axis, &spd);
+        if (axis == 'X' || axis == 'x') sX.setMaxSpeed(spd);
+        else if (axis == 'Y' || axis == 'y') sY.setMaxSpeed(spd);
+        else if (axis == 'Z' || axis == 'z') sZ.setMaxSpeed(spd);
+        else { ack(seq, "ERR:AXIS"); return; }
+        ack(seq, "OK", "SPEED_SET"); return;
+    }
+
+    ack(seq, "ERR:UNKNOWN");
+}
+
+// ===================== HELPERS =====================
+void startMove(float mx, float my, float mz, uint16_t seq) {
+    sX.moveTo((long)(mx * STEPS_MM_XY));
+    sY.moveTo((long)(my * STEPS_MM_XY));
+    sZ.moveTo((long)(mz * STEPS_MM_Z));
+    moveSeq = seq; state = S_MOVING;
+    moveStartMs = millis();
+    // Estimate move time from max axis distance
+    float dx = abs(mx - sX.currentPosition() / STEPS_MM_XY);
+    float dy = abs(my - sY.currentPosition() / STEPS_MM_XY);
+    float dz = abs(mz - sZ.currentPosition() / STEPS_MM_Z);
+    float maxDist = max(max(dx, dy), dz);
+    moveTimeoutMs = (unsigned long)(maxDist / min(XY_SPEED, Z_SPEED) * 1000 * MOTION_WDT_MULT) + 3000;
+    char d[64];
+    snprintf(d, sizeof(d), "TO X%.1f Y%.1f Z%.1f", mx, my, mz);
+    ack(seq, "OK", d);
+}
+
+void skipTo(const char** p, int words) {
+    for (int i = 0; i < words; i++) {
+        while (**p && **p != ' ') (*p)++;
+        while (**p == ' ') (*p)++;
+    }
+}
+
+void parseXYZ(const char* p, float* x, float* y, float* z) {
+    while (*p) {
+        if (*p == 'X' || *p == 'x') *x = atof(p + 1);
+        else if (*p == 'Y' || *p == 'y') *y = atof(p + 1);
+        else if (*p == 'Z' || *p == 'z') *z = atof(p + 1);
+        while (*p && *p != ' ') p++;
         while (*p == ' ') p++;
-        while (*p && *p != ' ') p++; // skip MOVE
-        while (*p == ' ') p++;
-
-        // Parse X, Y, Z arguments
-        while (*p) {
-            if (*p == 'X' || *p == 'x') mx = atof(p + 1);
-            else if (*p == 'Y' || *p == 'y') my = atof(p + 1);
-            else if (*p == 'Z' || *p == 'z') mz = atof(p + 1);
-            // Advance to next space
-            while (*p && *p != ' ') p++;
-            while (*p == ' ') p++;
-        }
-
-        if (mx < 0 || my < 0 || mz < 0) {
-            sendAck(seq, "ERR", "MOVE_PARSE_FAIL");
-            return;
-        }
-
-        // Clamp to travel limits
-        mx = constrain(mx, 0.0f, X_MAX_MM);
-        my = constrain(my, 0.0f, Y_MAX_MM);
-        mz = constrain(mz, 0.0f, Z_MAX_MM);
-
-        targetStepsX = (long)(mx * STEPS_PER_MM_XY);
-        targetStepsY = (long)(my * STEPS_PER_MM_XY);
-        targetStepsZ = (long)(mz * STEPS_PER_MM_Z);
-
-        stepperX.moveTo(targetStepsX);
-        stepperY.moveTo(targetStepsY);
-        stepperZ.moveTo(targetStepsZ);
-
-        moveSeq = seq;
-        state = STATE_MOVING;
-
-        char detail[64];
-        snprintf(detail, sizeof(detail), "TARGET X%.1f Y%.1f Z%.1f", mx, my, mz);
-        sendAck(seq, "OK", detail);
-        return;
-    }
-
-    // --- MAGNET 0|1: electromagnet control ---
-    if (strcmp(cmdType, "MAGNET") == 0) {
-        int val = 0;
-        const char* p = cmd;
-        // Skip to value
-        while (*p && *p != ' ') p++; while (*p == ' ') p++;
-        while (*p && *p != ' ') p++; while (*p == ' ') p++;
-        val = atoi(p);
-
-        setMagnet(val != 0);
-        sendAck(seq, "OK", val ? "MAGNET_ON" : "MAGNET_OFF");
-        return;
-    }
-
-    // --- Unknown command ---
-    sendAck(seq, "ERR", "UNKNOWN_CMD");
-}
-
-// ============================================================
-// Homing
-// ============================================================
-void startHoming() {
-    setMagnet(false);
-    homed = false;
-
-    // Home Z first (safety — lift head), then X, then Y
-    state = STATE_HOMING_Z;
-    stepperZ.setMaxSpeed(HOMING_SPEED_MMPS * STEPS_PER_MM_Z);
-    stepperZ.moveTo(-100000);  // Move toward endstop (negative = toward home)
-
-    sendEvent("HOMING", "Z_START");
-}
-
-void handleHoming() {
-    int endstopPin;
-    AccelStepper* stepper;
-
-    switch (state) {
-        case STATE_HOMING_Z:
-            endstopPin = Z_ENDSTOP_PIN;
-            stepper = &stepperZ;
-            break;
-        case STATE_HOMING_X:
-            endstopPin = X_ENDSTOP_PIN;
-            stepper = &stepperX;
-            break;
-        case STATE_HOMING_Y:
-            endstopPin = Y_ENDSTOP_PIN;
-            stepper = &stepperY;
-            break;
-        case STATE_HOMING_BACKOFF:
-            // Back off from endstop
-            if (!stepperX.isRunning() && !stepperY.isRunning() && !stepperZ.isRunning()) {
-                // All backoffs complete — set positions to 0
-                stepperX.setCurrentPosition(0);
-                stepperY.setCurrentPosition(0);
-                stepperZ.setCurrentPosition(0);
-
-                // Restore normal speeds
-                stepperX.setMaxSpeed(XY_MAX_SPEED_MMPS * STEPS_PER_MM_XY);
-                stepperY.setMaxSpeed(XY_MAX_SPEED_MMPS * STEPS_PER_MM_XY);
-                stepperZ.setMaxSpeed(Z_MAX_SPEED_MMPS * STEPS_PER_MM_Z);
-
-                homed = true;
-                state = STATE_IDLE;
-                sendEvent("HOMED", "ALL_AXES");
-            }
-            return;
-        default:
-            return;
-    }
-
-    // Check if endstop triggered
-    if (isEndstopTriggered(endstopPin)) {
-        stepper->stop();
-        stepper->setCurrentPosition(0);
-
-        // Backoff
-        long backoffSteps = (long)(HOMING_BACKOFF_MM *
-            ((state == STATE_HOMING_Z) ? STEPS_PER_MM_Z : STEPS_PER_MM_XY));
-        stepper->moveTo(backoffSteps);
-
-        // Transition to next axis or backoff
-        if (state == STATE_HOMING_Z) {
-            sendEvent("HOMING", "Z_HIT");
-            state = STATE_HOMING_X;
-            stepperX.setMaxSpeed(HOMING_SPEED_MMPS * STEPS_PER_MM_XY);
-            stepperX.moveTo(-100000);
-            sendEvent("HOMING", "X_START");
-        } else if (state == STATE_HOMING_X) {
-            sendEvent("HOMING", "X_HIT");
-            state = STATE_HOMING_Y;
-            stepperY.setMaxSpeed(HOMING_SPEED_MMPS * STEPS_PER_MM_XY);
-            stepperY.moveTo(-100000);
-            sendEvent("HOMING", "Y_START");
-        } else if (state == STATE_HOMING_Y) {
-            sendEvent("HOMING", "Y_HIT");
-            // Start backoff for all axes
-            long backXY = (long)(HOMING_BACKOFF_MM * STEPS_PER_MM_XY);
-            long backZ  = (long)(HOMING_BACKOFF_MM * STEPS_PER_MM_Z);
-            stepperX.moveTo(backXY);
-            stepperY.moveTo(backXY);
-            stepperZ.moveTo(backZ);
-            state = STATE_HOMING_BACKOFF;
-            sendEvent("HOMING", "BACKOFF_START");
-        }
     }
 }
 
-// ============================================================
-// Movement (non-blocking)
-// ============================================================
-void handleMoving() {
-    // Check endstops during motion (safety)
-    if (stepperX.isRunning() && isEndstopTriggered(X_ENDSTOP_PIN)) {
-        haltAll("X_ENDSTOP_HIT_DURING_MOVE");
-        return;
-    }
-    if (stepperY.isRunning() && isEndstopTriggered(Y_ENDSTOP_PIN)) {
-        haltAll("Y_ENDSTOP_HIT_DURING_MOVE");
-        return;
-    }
-    if (stepperZ.isRunning() && isEndstopTriggered(Z_ENDSTOP_PIN)) {
-        haltAll("Z_ENDSTOP_HIT_DURING_MOVE");
-        return;
-    }
-
-    // Check if all axes have reached target
-    if (!stepperX.isRunning() && !stepperY.isRunning() && !stepperZ.isRunning()) {
-        state = STATE_IDLE;
-        char detail[64];
-        snprintf(detail, sizeof(detail), "AT X%.2f Y%.2f Z%.2f",
-                 stepperX.currentPosition() / STEPS_PER_MM_XY,
-                 stepperY.currentPosition() / STEPS_PER_MM_XY,
-                 stepperZ.currentPosition() / STEPS_PER_MM_Z);
-        sendAck(moveSeq, "DONE", detail);
-        sendEvent("MOVE_DONE", detail);
-    }
+void halt(const char* r) {
+    sX.stop(); sY.stop(); sZ.stop();
+    setMag(false);
+    state = S_HALT;
+    evt("HALT", r);
 }
 
-// ============================================================
-// Safety
-// ============================================================
-void haltAll(const char* reason) {
-    // Immediate stop — decelerate to zero
-    stepperX.stop();
-    stepperY.stop();
-    stepperZ.stop();
-
-    // CRITICAL: magnet OFF on halt to prevent piece from sticking
-    // mid-air and falling when power is lost
-    setMagnet(false);
-
-    state = STATE_HALT;
-    sendEvent("HALT", reason);
+void setMag(bool on) {
+    magOn = on;
+    digitalWrite(MAG_PIN, on ? HIGH : LOW);
 }
 
-void setMagnet(bool on) {
-    magnetOn = on;
-    digitalWrite(MAGNET_PIN, on ? HIGH : LOW);
-    // NOTE: IRLZ44N MOSFET with 1N4007 flyback diode across the coil.
-    // The flyback diode (cathode to +V, anode to drain) prevents
-    // back-EMF from damaging the MOSFET when the coil de-energizes.
+void setRelay(bool on) {
+    relayOn = on;
+    digitalWrite(RELAY_PIN, on ? HIGH : LOW);
+    if (!on) { sX.stop(); sY.stop(); sZ.stop(); }
 }
 
-bool isEndstopTriggered(int pin) {
-    // NC endstop: normally HIGH (closed circuit through pullup).
-    // When triggered (switch opens), the pin reads LOW.
-    // We invert so triggered = true.
-    return digitalRead(pin) == LOW;
+bool endstop(int pin) { return digitalRead(pin) == LOW; }
+
+void enableMotors(bool en) {
+    // A4988: ENABLE is active LOW
+    digitalWrite(X_EN, en ? LOW : HIGH);
+    digitalWrite(Y_EN, en ? LOW : HIGH);
+    digitalWrite(Z_EN, en ? LOW : HIGH);
 }
 
-// ============================================================
-// Microstepping Configuration
-// ============================================================
-void configMicrostepping() {
-    // A4988 1/16 microstepping: MS1=HIGH, MS2=HIGH, MS3=LOW
-    // DRV8825 1/16 microstepping: M0=LOW, M1=LOW, M2=HIGH
-    // Default to A4988 config; change if using DRV8825
-    #ifdef USE_DRV8825
-        pinMode(MS1_PIN, OUTPUT); digitalWrite(MS1_PIN, LOW);
-        pinMode(MS2_PIN, OUTPUT); digitalWrite(MS2_PIN, LOW);
-        pinMode(MS3_PIN, OUTPUT); digitalWrite(MS3_PIN, HIGH);
-    #else
-        // A4988 default
-        pinMode(MS1_PIN, OUTPUT); digitalWrite(MS1_PIN, HIGH);
-        pinMode(MS2_PIN, OUTPUT); digitalWrite(MS2_PIN, HIGH);
-        pinMode(MS3_PIN, OUTPUT); digitalWrite(MS3_PIN, LOW);
-    #endif
-}
-
-// ============================================================
-// Protocol Output
-// ============================================================
-void sendAck(uint16_t seq, const char* status, const char* detail) {
-    // Format: "ACK <seq> <status> [detail]\n"
-    Serial.print("ACK ");
-    Serial.print(seq);
-    Serial.print(" ");
-    Serial.print(status);
-    if (detail && detail[0]) {
-        Serial.print(" ");
-        Serial.print(detail);
-    }
+void ack(uint16_t s, const char* st, const char* d) {
+    Serial.print(st); Serial.print(" "); Serial.print(s);
+    if (d && d[0]) { Serial.print(" "); Serial.print(d); }
     Serial.println();
 }
 
-void sendEvent(const char* event, const char* detail) {
-    // Format: "EVT <event> [detail]\n"
-    Serial.print("EVT ");
-    Serial.print(event);
-    if (detail && detail[0]) {
-        Serial.print(" ");
-        Serial.print(detail);
-    }
+void evt(const char* e, const char* d) {
+    Serial.print("EVT:"); Serial.print(e);
+    if (d && d[0]) { Serial.print(" "); Serial.print(d); }
     Serial.println();
 }

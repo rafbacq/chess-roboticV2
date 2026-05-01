@@ -1,116 +1,82 @@
-# Firmware — Chess Gantry Robot v2.0
+# Chess Gantry Robot Firmware
 
-## Architecture
+## Overview
 
-Stepper-based XYZ Cartesian gantry with electromagnet pick-up.
+Arduino firmware for Raspberry Pi Pico (RP2040) controlling a Cartesian XY+Z stepper gantry with electromagnet pickup for chess piece manipulation.
 
-```
-           Y axis
-           ↑
-           |
-    [Endstop]──────────────────[Y Motor]
-           |                        |
-           |     Chess Board        |
-           |     (300×300mm)        |
-           |                        |
-    [Endstop]──────────────────────
-           └──→ X axis
-          [X Motor]
-          [Endstop]
+## Hardware
 
-    Z axis: vertical on the Y carriage, lifts the electromagnet head.
-```
+- 3× NEMA17 steppers via A4988 drivers (1/16 microstepping)
+- 3× Mechanical endstops (NC, active-low)
+- 1× Electromagnet via IRLZ44N MOSFET (with flyback diode)
+- 1× 5V relay for motor power safety kill
+- 2× Momentary buttons (STOP, RESET)
 
-## Bill of Materials
+## Pin Map
 
-| Qty | Component | Purpose | Notes |
-|-----|-----------|---------|-------|
-| 3 | NEMA17 stepper motor (1.5–2A) | XYZ axes | 1.8°/step, bipolar |
-| 3 | A4988 or DRV8825 driver module | Stepper control | Heat sink required |
-| 1 | Raspberry Pi Pico (RP2040) | Controller | USB serial |
-| 3 | GT2 timing belt + 20T pulley | Motion transmission | 2mm pitch |
-| 6 | 8mm smooth rod + LM8UU bearing | Linear guides | Or MGN12 linear rails |
-| 3 | Mechanical endstop (NC) | Homing reference | Microswitch type |
-| 1 | N52 neodymium disk magnet | Piece pickup | ~12mm dia × 3mm |
-| 1 | IRLZ44N N-channel MOSFET | Magnet switching | Logic-level gate |
-| 1 | 1N4007 rectifier diode | Flyback protection | Across magnet coil |
-| 1 | 12V/5A power supply | Motor power | Separate from Pico USB |
-| ~ | Steel washers or M3 screws | Piece modification | One per chess piece |
-| 1 | Felt pads (adhesive) | Piece base | Covers embedded steel |
+| Function | GPIO | Notes |
+|----------|:----:|-------|
+| X STEP | GP2 | |
+| X DIR | GP3 | |
+| X ENABLE | GP4 | Active LOW |
+| Y STEP | GP5 | |
+| Y DIR | GP6 | |
+| Y ENABLE | GP7 | Active LOW |
+| Z STEP | GP8 | |
+| Z DIR | GP9 | |
+| Z ENABLE | GP12 | Active LOW |
+| Magnet MOSFET | GP10 | Active HIGH, 220Ω gate resistor + 10kΩ pulldown |
+| Relay | GP11 | Active HIGH = power ON |
+| MS1 | GP13 | A4988 microstepping |
+| MS2 | GP14 | |
+| MS3 | GP15 | |
+| STOP button | GP21 | Active LOW, internal pullup |
+| RESET button | GP22 | Active LOW, internal pullup |
+| LED | GP25 | Onboard |
+| X Endstop | GP26 | NC switch, internal pullup |
+| Y Endstop | GP27 | |
+| Z Endstop | GP28 | |
 
-## Pin Map (RP2040)
+**GP0/GP1**: Reserved for USB serial. NOT used for motors.
 
-```
-GP0, GP1  — RESERVED (USB UART, do not use)
-GP2, GP3  — X stepper STEP, DIR
-GP4, GP5  — Y stepper STEP, DIR
-GP6, GP7  — Z stepper STEP, DIR
-GP8, GP9  — Spare (STEP, DIR) — disabled, future use
-GP10      — X endstop (NC, INPUT_PULLUP)
-GP11      — Y endstop
-GP12      — Z endstop
-GP13      — Electromagnet MOSFET gate
-GP14-16   — Microstepping select (MS1/MS2/MS3)
-GP25      — Onboard LED (status indicator)
-```
+## A4988 Microstepping (MS1/MS2/MS3 jumpers)
+
+| MS1 | MS2 | MS3 | Resolution |
+|:---:|:---:|:---:|:----------:|
+| L | L | L | Full step |
+| H | L | L | 1/2 step |
+| L | H | L | 1/4 step |
+| H | H | L | **1/8 step** |
+| H | H | H | **1/16 step** ← Default |
+
+Firmware defaults to 1/16 via software pins. Can also be hardwired.
 
 ## Building
 
-Requires [PlatformIO](https://platformio.org/):
-
 ```bash
-cd firmware/
-pio run                # Compile
-pio run -t upload      # Flash via USB
-pio device monitor     # Open serial monitor
+# Install PlatformIO
+pip install platformio
+
+# Build
+cd firmware
+pio run
+
+# Upload (hold BOOTSEL, plug in Pico, then):
+pio run --target upload
+
+# Monitor serial
+pio device monitor --baud 115200
 ```
 
-### DRV8825 vs A4988
+## Protocol
 
-By default, the firmware configures A4988 microstepping pins.
-To use DRV8825, add `-D USE_DRV8825` in `platformio.ini` build_flags.
-
-## Microstepping
-
-Default: **1/16 microstepping** → 3200 µsteps/revolution.
-
-With a 20-tooth GT2 pulley (40mm/rev):
-- **80 microsteps per mm**
-- Theoretical resolution: **0.0125mm (12.5 µm)**
+See [PROTOCOL.md](PROTOCOL.md) for full serial command reference.
 
 ## Safety Features
 
-1. **Watchdog**: 2-second timeout. If no command received, auto-HALT.
-2. **Endstop polling**: Every step during motion. Hard stop on trigger.
-3. **Magnet auto-off**: On HALT or watchdog reset.
-4. **Homing required**: No motion commands accepted until HOME completes.
-5. **Travel limits**: Software clamping to max XYZ dimensions.
-6. **Acceleration ramping**: AccelStepper prevents instant starts/stops.
-
-## Wiring the Electromagnet
-
-```
-         Pico GP13 ──── [IRLZ44N Gate]
-                         │
-    +12V ────── [N52 Magnet Coil] ──── [IRLZ44N Drain]
-         │                                    │
-         └───── [1N4007 ←──────────────┘      │
-                (cathode to +12V)              │
-                                          [IRLZ44N Source] ──── GND
-```
-
-The 1N4007 flyback diode (cathode to +12V, anode to drain) clamps
-back-EMF when the MOSFET turns off, preventing voltage spikes.
-
-## Chess Piece Modification
-
-Each chess piece needs a small ferrous target:
-- Drill a shallow 3mm hole in the base
-- Epoxy a steel washer (M3×8mm OD) or small screw
-- Cover with adhesive felt pad
-
-Or: purchase a magnetic tournament chess set with pre-magnetized bases.
-
-## Serial Protocol
-
-See [PROTOCOL.md](./PROTOCOL.md) for the complete serial command reference.
+1. **Watchdog**: 2s timeout — kills relay (motor power) if no host command
+2. **Per-motion timeout**: Aborts if move exceeds estimated time × 1.5
+3. **Homing required**: All motion commands rejected until HOME completes
+4. **Endstop protection**: Motion aborts on unexpected endstop trigger
+5. **STOP button**: Hardware emergency stop, immediate motor halt
+6. **Magnet auto-off**: Magnet forced OFF on any HALT condition

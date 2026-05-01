@@ -13,8 +13,8 @@ board_state_mode: "vision"
 
 # Hardware configuration
 hardware:
-  arm_type: "simulated"        # simulated, xarm6, franka_fr3, ur3e, so100
-  gripper_type: "simulated"    # simulated, xarm_gripper, franka_hand, custom
+  arm_type: "simulated"        # simulated, xarm6, franka_fr3, ur3e, so100, gantry
+  gripper_type: "simulated"    # simulated, xarm_gripper, franka_hand, custom, electromagnet
   arm_config_file: "config/hardware/xarm6.yaml"
 
 # Board configuration
@@ -41,7 +41,8 @@ perception:
   camera_config_file: "config/perception/camera_rgb.yaml"
   use_apriltags: true
   apriltag_family: "tag36h11"
-  piece_detection_model: "occupancy"  # occupancy, classification
+  piece_detection_model: "classification"  # occupancy, classification
+  classifier_model_path: "models/classifier/piece_classifier.pt"
   confidence_threshold: 0.8
 
 # Calibration
