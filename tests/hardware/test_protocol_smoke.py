@@ -32,9 +32,18 @@ class TestGantryProtocol:
         a.close()
 
     def _send_recv(self, adapter: GantrySimAdapter, cmd: str, seq: int = 1) -> str:
-        """Send a command and return the first ACK line."""
+        """Send a command and return the first ACK/response line (skipping EVT lines)."""
         adapter.write(f"{seq} {cmd}\n".encode())
-        return adapter.readline().decode().strip()
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            line = adapter.readline().decode().strip()
+            if not line:
+                continue
+            # Skip event lines — we want the ACK
+            if line.startswith("EVT "):
+                continue
+            return line
+        return ""
 
     def test_ping(self, adapter):
         resp = self._send_recv(adapter, "PING", seq=1)
